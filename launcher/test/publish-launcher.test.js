@@ -51,7 +51,7 @@ test('런처 올리기: 릴리스를 사전 배포로 만들고, 임시 이름�
   process.env.GITHUB_API_URL = `${base}/api`
   process.env.GITHUB_WEB_URL = base
   try {
-    const r1 = await publishLauncher({ distDir: tmp, token: 't' })
+    const r1 = await publishLauncher({ distDir: tmp, token: 't', verifyTries: 1 })
     assert.equal(release.prerelease, true) // releases/latest(모드팩)에 잡히면 안 됨
     assert.equal(release.make_latest, 'false')
     assert.deepEqual(assets.map(a => a.name).sort(), ['KubejsRPG-Setup.exe', 'KubejsRPG-x64.nsis.7z'])
@@ -62,7 +62,7 @@ test('런처 올리기: 릴리스를 사전 배포로 만들고, 임시 이름�
     const oldIds = assets.map(a => a.id)
     fs.writeFileSync(path.join(tmp, `modpack-launcher-${version}-x64.nsis.7z`), 'package-bytes-v2')
     calls.length = 0
-    await publishLauncher({ distDir: tmp, token: 't' })
+    await publishLauncher({ distDir: tmp, token: 't', verifyTries: 1 })
     assert.equal(assets.length, 2)
     assert.ok(assets.every(a => !oldIds.includes(a.id)))
     assert.equal(assets.find(a => a.name === 'KubejsRPG-x64.nsis.7z').size, 'package-bytes-v2'.length)
@@ -71,7 +71,7 @@ test('런처 올리기: 릴리스를 사전 배포로 만들고, 임시 이름�
     const firstDelete = calls.findIndex(c => c.startsWith('DELETE'))
     assert.ok(firstUpload >= 0 && firstUpload < firstDelete)
 
-    await assert.rejects(publishLauncher({ distDir: path.join(tmp, 'none'), token: 't' }), /빌드 결과가 없습니다/)
+    await assert.rejects(publishLauncher({ distDir: path.join(tmp, 'none'), token: 't', verifyTries: 1 }), /빌드 결과가 없습니다/)
   } finally {
     delete process.env.GITHUB_API_URL
     delete process.env.GITHUB_WEB_URL

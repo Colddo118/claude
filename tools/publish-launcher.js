@@ -70,7 +70,7 @@ async function replaceAsset (token, repo, release, file, name, log) {
   return data.length
 }
 
-async function publishLauncher ({ distDir = path.join(LAUNCHER_DIR, 'dist', 'nsis-web'), token = process.env.GITHUB_TOKEN, log = () => {} } = {}) {
+async function publishLauncher ({ distDir = path.join(LAUNCHER_DIR, 'dist', 'nsis-web'), token = process.env.GITHUB_TOKEN, log = () => {}, verifyTries = 6 } = {}) {
   if (!token) throw new Error('GITHUB_TOKEN 이 필요합니다')
   const pkg = JSON.parse(await fsp.readFile(path.join(LAUNCHER_DIR, 'package.json'), 'utf8'))
   const target = packageTarget(pkg)
@@ -93,7 +93,13 @@ async function publishLauncher ({ distDir = path.join(LAUNCHER_DIR, 'dist', 'nsi
     prerelease: true,
     make_latest: 'false'
   })
-  const reachable = await checkUrl(target.url, size)
+  // 이름을 바꾼 직후엔 GitHub 다운로드 주소에 잠깐 늦게 반영될 수 있어서 몇 번 다시 확인
+  let reachable = false
+  const packageUrl = `${github.releaseDownloadPrefix(target.repo)}${target.tag}/${target.packageName}`
+  for (let i = 0; i < verifyTries && !reachable; i++) {
+    if (i) await new Promise(resolve => setTimeout(resolve, 5000))
+    reachable = await checkUrl(packageUrl, size)
+  }
   return { version: pkg.version, packageUrl: target.url, setupUrl, reachable }
 }
 
