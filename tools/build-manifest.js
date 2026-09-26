@@ -16,9 +16,11 @@ const fsp = fs.promises
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { pipeline } = require('node:stream/promises')
-const { writeZip } = require('./lib/zip')
+const { writeZip } = require('../launcher/src/common/zip')
 const { readCurseForgeFiles, cdnUrlFor, checkUrl } = require('./lib/curseforge')
 const { groupFiles } = require('./lib/grouping')
+const { SERVER_DIRS, clientOnlyPatterns } = require('./lib/server-files')
+const secret = require('../launcher/src/common/secret')
 const github = require('./lib/github')
 const {
   FORMAT_VERSION,
@@ -155,7 +157,7 @@ const BUNDLE_LIMIT = 16 * 1024 * 1024 // 작은 파일 묶음(zip) 하나의 목
  * - 큰 파일은 f-<sha1>, 작은 파일은 폴더 단위 묶음 b-<sha1>.zip
  * - 이전 버전 매니페스트에 같은 해시가 있으면 그 주소를 그대로 재사용 (다시 올리지도, 다시 받지도 않음)
  */
-async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, selfHosted, bundles, newAssets, largeFile, bundleLimit }) {
+async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, previousServer, selfHosted, bundles, newAssets, largeFile, bundleLimit }) {
   const releaseDir = path.join(outDir, `release-${version}`)
   await fsp.rm(releaseDir, { recursive: true, force: true })
   await fsp.mkdir(releaseDir, { recursive: true })
@@ -166,6 +168,7 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
     if (f.url && f.url.startsWith(ownPrefix)) known.set(`f:${f.sha1}`, f.url)
   }
   for (const b of (previous && previous.bundles) || []) known.set(`b:${b.sha1}`, b.url)
+  for (const b of (previousServer && previousServer.bundles) || []) if (b.enc) known.set(`s:${b.sha1}`, b.url)
 
   let reused = 0
   const thisRelease = github.assetUrl(repo, version, '')
@@ -201,7 +204,52 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
     bundles.push({ id: g.id, url, sha1, size })
     for (const f of g.files) f.bundle = g.id
   }
-  return { releaseDir, reused }
+  return { releaseDir, addAsset, reused: () => reused }
+}
+
+/**
+ * 서버 패키지: 서버 컴의 서버시작.bat 이 받아가는 목록 (server-manifest.bin, 전체 암호화).
+ * - 친구들과 같은 파일(모드, 설정 등)은 같은 주소·묶음을 그대로 쓴다
+ * - 서버 전용 파일(서버 스크립트·데이터)은 암호화 묶음(s-<sha1>.bin)으로 올린다
+ * - 클라이언트 전용 모드는 뺀다
+ */
+async function buildServerPackage ({ serverKey, included, clientFiles, clientBundles, sourceDir, outDir, releaseDir, addAsset, bundleLimit, userConfig, base }) {
+  const clientOnly = clientOnlyPatterns(userConfig)
+  const byPath = new Map(clientFiles.map(f => [f.path, f]))
+  const files = []
+  const secretFiles = []
+  for (const rel of included) {
+    if (!matchesAny(rel, SERVER_DIRS) || matchesAny(rel.toLowerCase(), clientOnly)) continue
+    const shared = byPath.get(rel)
+    const entry = shared
+      ? { path: rel, sha1: shared.sha1, size: shared.size, ...(shared.url ? { url: shared.url } : {}), ...(shared.bundle ? { bundle: shared.bundle } : {}) }
+      : { path: rel, sha1: await sha1File(path.join(sourceDir, ...rel.split('/'))), size: (await fsp.stat(path.join(sourceDir, ...rel.split('/')))).size }
+    // 모드는 항상 똑같이, 나머지는 관리자가 바꿨을 때만 (서버가 실행 중에 쓰는 데이터 보존)
+    if (!rel.startsWith('mods/')) entry.mode = 'update'
+    if (!shared) secretFiles.push(entry)
+    files.push(entry)
+  }
+
+  const bundles = clientBundles.filter(b => files.some(f => f.bundle === b.id))
+  const tmp = path.join(releaseDir, '.building-server.zip')
+  for (const g of groupFiles(secretFiles, bundleLimit)) {
+    await writeZip(tmp, g.files.map(f => ({ name: f.path, file: path.join(sourceDir, ...f.path.split('/')) })))
+    const sealed = secret.encrypt(await fsp.readFile(tmp), serverKey)
+    await fsp.rm(tmp, { force: true })
+    const sha1 = require('node:crypto').createHash('sha1').update(sealed).digest('hex')
+    const url = await addAsset(`s:${sha1}`, `s-${sha1}.bin`, sealed.length, dest => fsp.writeFile(dest, sealed))
+    const id = `server:${g.id}`
+    bundles.push({ id, url, sha1, size: sealed.length, enc: true })
+    for (const f of g.files) f.bundle = id
+  }
+
+  const serverManifest = { ...base, strictDirs: [], clientOnly, bundles, files }
+  validateManifest(serverManifest)
+  // 다음 빌드에서 재사용 판단용 (로컬에만 보관, 업로드는 암호화본만)
+  await fsp.writeFile(path.join(outDir, 'server-manifest.json'), JSON.stringify(serverManifest, null, 2))
+  const binFile = path.join(releaseDir, 'server-manifest.bin')
+  await fsp.writeFile(binFile, secret.encrypt(Buffer.from(JSON.stringify(serverManifest)), serverKey))
+  return { binFile, fileCount: files.length, secretCount: secretFiles.length }
 }
 
 function nextVersion (v) {
@@ -212,7 +260,7 @@ function nextVersion (v) {
   return parts.join('.')
 }
 
-async function build ({ source, out, version, notes, config: configPath, force, github: githubArg, ...flags }) {
+async function build ({ source, out, version, notes, config: configPath, force, github: githubArg, serverKey = process.env.SERVER_PACK_KEY, ...flags }) {
   const sourceDir = path.resolve(source)
   const outDir = path.resolve(out)
   const userConfig = await readJsonIfExists(configPath ? path.resolve(configPath) : path.join(sourceDir, 'pack.config.json')) || {}
@@ -270,15 +318,17 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   const bundles = []
   const newAssets = []
   let releaseDir
-  let reused = 0
+  let assets
   let newObjects = 0
+  const MB = 1024 * 1024
+  const bundleLimit = config.bundleSizeMB ? config.bundleSizeMB * MB : BUNDLE_LIMIT
   if (mode === 'github') {
-    const MB = 1024 * 1024
-    ;({ releaseDir, reused } = await buildGithubAssets({
-      repo, version, sourceDir, outDir, previous, selfHosted, bundles, newAssets,
-      largeFile: config.largeFileMB ? config.largeFileMB * MB : LARGE_FILE,
-      bundleLimit: config.bundleSizeMB ? config.bundleSizeMB * MB : BUNDLE_LIMIT
-    }))
+    assets = await buildGithubAssets({
+      repo, version, sourceDir, outDir, previous, selfHosted, bundles, newAssets, bundleLimit,
+      previousServer: await readJsonIfExists(path.join(outDir, 'server-manifest.json')),
+      largeFile: config.largeFileMB ? config.largeFileMB * MB : LARGE_FILE
+    })
+    releaseDir = assets.releaseDir
   } else {
     for (const f of selfHosted) {
       const objFile = path.join(outDir, ...objectPath(f.sha1).split('/'))
@@ -297,12 +347,9 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     ...history
   ].slice(0, config.changelogLimit)
 
+  const base = { formatVersion: FORMAT_VERSION, packName: config.packName, version, minecraft, loader }
   const manifest = {
-    formatVersion: FORMAT_VERSION,
-    packName: config.packName,
-    version,
-    minecraft,
-    loader,
+    ...base,
     ...(config.java ? { java: config.java } : {}),
     ...(config.server ? { server: config.server } : {}),
     ...(config.memory ? { memory: config.memory } : {}),
@@ -318,6 +365,14 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     // 릴리스에 올릴 파일은 releaseDir 한 곳에 모아 둔다 (수동 업로드 시 폴더 안 파일을 전부 첨부하면 됨)
     await fsp.copyFile(manifestFile, path.join(releaseDir, 'manifest.json'))
     newAssets.push(path.join(releaseDir, 'manifest.json'))
+  }
+  let serverPackage = null
+  if (mode === 'github' && serverKey) {
+    serverPackage = await buildServerPackage({
+      serverKey, included, clientFiles: files, clientBundles: bundles, sourceDir, outDir, releaseDir,
+      addAsset: assets.addAsset, bundleLimit, userConfig, base
+    })
+    newAssets.push(serverPackage.binFile)
   }
 
   // 어디가 큰지 보여주기 위한 요약: 폴더별 합계, 가장 큰 파일
@@ -338,7 +393,8 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     newObjects,
     newAssets,
     releaseDir,
-    reused,
+    reused: assets ? assets.reused() : 0,
+    serverPackage,
     manifestFile,
     cdnCount: files.length - selfHosted.length,
     cdnFailed,
