@@ -210,6 +210,15 @@ test('pack.config.json 의 exclude 는 기본 제외 목록에 더해진다', as
   write(src, 'kubejs/startup_scripts/main.js', 'x')
   write(src, 'kubejs/dev/vfx_ref/huge.psd', 'big')
   write(src, 'mods/b.jar.disabled', 'off')
+  write(src, 'config/iris.properties', 'shaderPack=x')
+  write(src, 'config/jei/jei-client.ini', 'sort=a')
+  write(src, 'config/create-common.toml', 'speed=1')
   const r = await build({ source: src, out: path.join(tmp, 'exclude-out'), version: '1.0.0' })
-  assert.deepEqual(r.manifest.files.map(f => f.path), ['kubejs/startup_scripts/main.js', 'mods/a.jar'])
+  assert.deepEqual(r.manifest.files.map(f => [f.path, f.mode]), [
+    ['config/create-common.toml', 'update'],
+    ['config/iris.properties', 'once'], // 개인 취향 설정은 처음 한 번만
+    ['config/jei/jei-client.ini', 'once'],
+    ['kubejs/startup_scripts/main.js', undefined],
+    ['mods/a.jar', undefined]
+  ])
 })

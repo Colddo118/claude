@@ -127,7 +127,7 @@
 | `bundleUrl` | 없음 | GitHub 외 다른 곳에 zip 을 올릴 때 주소 틀. 예: `https://example.com/pack-{version}.zip` |
 | `include` | mods, config, defaultconfigs, kubejs, scripts, resourcepacks, shaderpacks, options.txt, servers.dat | 배포할 파일/폴더 (글롭 `*`, `**` 사용 가능) |
 | `exclude` | `**/*.disabled`, `**/*.bak`, 숨김 폴더 등 | 제외할 파일. 적은 항목은 기본값에 **더해짐**. 예: `["kubejs/dev"]` |
-| `once` | options.txt, servers.dat | 처음 설치 때만 넣는 파일 |
+| `once` | options.txt, servers.dat, iris/sodium/embeddium 그래픽 설정, `config/jei`, ftbchunks 클라이언트 설정 | 처음 설치 때만 넣는 개인 취향 파일. 적은 항목은 기본값에 **더해짐** |
 | `update` | `["config"]` | 관리자가 바꿨을 때만 덮어쓰는 파일 |
 | `strictDirs` | `["mods"]` | 목록에 없는 파일을 백업 폴더로 치울 폴더 |
 | `server` | 없음 | `{ "address": "play.example.com", "port": 25565 }` → 게임 시작 시 자동 접속 |
