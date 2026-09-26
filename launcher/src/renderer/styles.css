@@ -271,6 +271,12 @@ button.win.close::before {
 .facts > div { display: flex; gap: calc(var(--u) * 3); }
 .facts dt { color: var(--dim); flex: none; min-width: calc(var(--u) * 12); }
 .facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; user-select: text; }
+/* 서버 상태 = 픽셀 점 + 글자 (켜짐 초록 · 꺼짐 빨강 · 확인 중 흐림) */
+.srv { color: var(--dim); white-space: nowrap; }
+.srv::before { content: ""; display: inline-block; width: calc(var(--u) * 2); height: calc(var(--u) * 2); margin-right: calc(var(--u) * 2); background: currentColor; vertical-align: middle; }
+.srv.on { color: var(--on); }
+.srv.off { color: var(--red); }
+#server-text { margin-left: calc(var(--u) * 3); }
 #status-text.error { color: var(--red); font: 400 20px/1.4 var(--body); white-space: normal; user-select: text; }
 .progress { height: calc(var(--u) * 2); background: var(--bar-bg); overflow: hidden; }
 #progress-bar { height: 100%; width: 0; background: var(--bar); transition: width .15s linear; }

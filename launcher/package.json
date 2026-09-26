@@ -1,7 +1,7 @@
 {
   "name": "modpack-launcher",
   "productName": "KubejsRPG",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "KubejsRPG 모드팩 런처",
   "main": "src/main/main.js",
   "private": true,

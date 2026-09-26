@@ -165,6 +165,7 @@ function renderPack () {
   ui.server.textContent = pack.server || ''
   // "새 업데이트" 표시는 상태 줄과 패치노트의 NEW 로 충분해서 따로 띄우지 않는다
   renderChangelog(pack.changelog)
+  refreshServer()
 
   const size = formatBytes(pack.downloadBytes)
   if (!pack.needsUpdate) {
@@ -218,6 +219,21 @@ async function check () {
       ui.changelog.replaceChildren(p)
     }
   }
+}
+
+// 서버 켜짐/꺼짐 · 접속 인원
+let serverTimer = null
+async function refreshServer () {
+  if (!pack || !pack.server) return
+  const el = $('server-state')
+  const s = await api.serverStatus().catch(() => null)
+  if (!s) return
+  el.classList.toggle('on', s.online)
+  el.classList.toggle('off', !s.online)
+  el.textContent = s.online ? `켜짐 · ${count(s.players.online)}/${count(s.players.max)}명` : '꺼짐'
+  el.title = s.online ? [s.motd, s.version, `${s.latencyMs}ms`].filter(Boolean).join(' · ') : `연결 안 됨 (${s.error || ''})`
+  clearTimeout(serverTimer)
+  serverTimer = setTimeout(refreshServer, 30 * 1000) // 30초마다 다시 확인
 }
 
 // ---------------------------------------------------------------- actions

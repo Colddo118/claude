@@ -8,6 +8,8 @@ const config = require('../../launcher.config.json')
 const updater = require('./updater')
 const { compareVersions } = require('../common/manifest')
 const game = require('./game')
+const serversDat = require('./servers-dat')
+const { pingServer } = require('./server-status')
 const { AccountStore, loginInteractive, getLaunchAuthorization } = require('./auth')
 
 const manifestUrl = process.env.MODPACK_MANIFEST_URL || config.manifestUrl
@@ -164,6 +166,13 @@ ipcMain.handle('pack:check', async () => {
   return { ...summarize(manifest, state, plan), settings: await loadSettings() }
 })
 
+// 서버 켜짐/꺼짐 · 접속 인원 (모드팩 정보를 한 번이라도 받은 뒤에만)
+ipcMain.handle('server:status', async () => {
+  const s = lastManifest && lastManifest.server
+  if (!s || !s.address) return null
+  return pingServer({ address: s.address, port: s.port })
+})
+
 ipcMain.handle('pack:update', () => exclusive(() => installUpdate()))
 ipcMain.handle('pack:repair', () => exclusive(() => installUpdate({ repair: true })))
 
@@ -211,6 +220,13 @@ ipcMain.handle('game:launch', () => exclusive(async () => {
   if (!authorization) {
     send('account', null)
     throw new Error('먼저 마이크로소프트 계정으로 로그인해 주세요.')
+  }
+
+  // 멀티플레이 서버 목록에 우리 서버가 항상 있게 (튕기거나 게임을 다시 켰을 때 주소를 안 적어도 되게)
+  if (manifest.server && manifest.server.address) {
+    const s = manifest.server
+    await serversDat.ensureServer(dirs.instance, { name: config.appName, address: s.port ? `${s.address}:${s.port}` : s.address })
+      .catch(e => console.error('서버 목록 등록 실패:', e.message))
   }
 
   // 3) 자바/로더/바닐라 준비 후 실행
