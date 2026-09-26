@@ -45,7 +45,7 @@ function __kit (id) {
   __defs[id](module, module.exports)
   return module.exports
 }
-__kit(${entry}).main().catch(e => { console.error('✘ ' + e.message); process.exit(1) })
+__kit(${entry}).main().catch(e => { console.error('✘ ' + e.message + (e.cause ? ' (' + (e.cause.code || e.cause.message) + ')' : '')); process.exit(1) })
 `
 }
 

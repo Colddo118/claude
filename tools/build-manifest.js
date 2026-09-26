@@ -281,7 +281,9 @@ async function build ({ source, out, version, notes, config: configPath, force, 
 
   const previous = await readJsonIfExists(path.join(outDir, 'manifest.json'))
   if (previous && previous.version === version && !force) {
-    throw new Error(`이미 ${version} 버전이 빌드되어 있습니다. 버전을 올리거나 --force 를 쓰세요.`)
+    // 빌드는 됐지만 업로드가 실패해서 GitHub 에 없는 버전이면 같은 번호로 다시 해도 된다
+    const unpublished = mode === 'github' && flags.publish && !(await checkUrl(github.assetUrl(repo, version, 'manifest.json')))
+    if (!unpublished) throw new Error(`이미 ${version} 버전이 빌드되어 있습니다. 버전을 올리거나 --force 를 쓰세요.`)
   }
 
   const walked = (await walk(sourceDir)).filter(p => matchesAny(p, config.include) && !matchesAny(p, config.exclude))
@@ -422,6 +424,11 @@ async function main () {
     process.exit(args.help ? 0 : 1)
   }
   const notes = args['notes-file'] ? await fsp.readFile(args['notes-file'], 'utf8') : args.notes
+  const saved = []
+  for (const name of ['manifest.json', 'server-manifest.json']) {
+    const file = path.join(path.resolve(args.out), name)
+    saved.push([file, await fsp.readFile(file).catch(() => null)])
+  }
   const r = await build({ ...args, notes })
   const { manifest } = r
   console.log(`✔ ${manifest.packName} v${manifest.version} (MC ${manifest.minecraft}, ${manifest.loader.type} ${manifest.loader.version || ''})`)
@@ -449,13 +456,22 @@ async function main () {
     console.log(`  → GitHub 에서 ${r.repo} 저장소에 태그 ${github.releaseTag(manifest.version)} 로 새 릴리스를 만들고`)
     console.log(`    ${r.releaseDir} 폴더 안의 파일을 전부 첨부하세요. (--publish 를 주면 자동)`)
   } else {
-    await github.publishRelease({
-      repo: r.repo,
-      token: process.env.GITHUB_TOKEN,
-      version: manifest.version,
-      notes,
-      files: r.newAssets
-    })
+    try {
+      await github.publishRelease({
+        repo: r.repo,
+        token: process.env.GITHUB_TOKEN,
+        version: manifest.version,
+        notes,
+        files: r.newAssets
+      })
+    } catch (e) {
+      // 올리지 못했으면 로컬 기록도 이전(실제로 배포된) 상태로 돌려 둔다
+      for (const [file, content] of saved) {
+        if (content === null) await fsp.rm(file, { force: true })
+        else await fsp.writeFile(file, content)
+      }
+      throw e
+    }
     console.log(`  ✔ GitHub 릴리스 ${github.releaseTag(manifest.version)} 게시 완료. 이제 런처에 업데이트가 뜹니다.`)
   }
   console.log('  ⚠ 이전 릴리스는 지우지 마세요. 바뀌지 않은 파일은 예전 릴리스에서 받습니다.')
@@ -464,7 +480,7 @@ async function main () {
 
 if (require.main === module) {
   main().catch(e => {
-    console.error(`✘ ${e.message}`)
+    console.error(`✘ ${e.message}${e.cause ? ` (${e.cause.code || e.cause.message})` : ''}`)
     process.exit(1)
   })
 }

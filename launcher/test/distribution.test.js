@@ -36,6 +36,10 @@ before(async () => {
       // 가짜 GitHub API
       if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/')) {
         api.push({ method: req.method, path: url.pathname, query: url.search, body })
+        if (req.headers.authorization === 'Bearer bad') {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          return res.end(JSON.stringify({ message: 'Bad credentials' }))
+        }
         res.writeHead(req.method === 'POST' ? 201 : 200, { 'Content-Type': 'application/json' })
         if (url.pathname === '/api/repos/me/modpack/releases') {
           return res.end(JSON.stringify({ id: 7, upload_url: `${base}/uploads/repos/me/modpack/releases/7/assets{?name,label}` }))
@@ -198,4 +202,31 @@ test('커스포지 CDN 주소 만들기', () => {
   assert.equal(cdnUrl({ id: 5846880, fileName: 'jei-1.21.1.jar' }), 'https://edge.forgecdn.net/files/5846/880/jei-1.21.1.jar')
   assert.equal(cdnUrl({ id: 5846007, fileName: 'a b.jar' }), 'https://edge.forgecdn.net/files/5846/7/a%20b.jar')
   assert.equal(cdnUrl({ id: 1, fileName: 'x.jar', downloadUrl: 'https://edge.forgecdn.net/files/0/1/x.jar' }), 'https://edge.forgecdn.net/files/0/1/x.jar')
+})
+
+test('GitHub 업로드가 실패하면 로컬 기록은 이전 상태 그대로, 같은 버전으로 다시 배포 가능', async () => {
+  const { execFile } = require('node:child_process')
+  const src = path.join(tmp, 'retry-src')
+  const out = path.join(tmp, 'retry-out')
+  write(src, 'pack.config.json', JSON.stringify({ github: 'me/modpack', minecraft: '1.21.1', loader: { type: 'neoforge', version: '21.1.248' } }))
+  write(src, 'config/a.toml', 'a=1')
+  const prev = JSON.stringify({ version: '0.9.0', changelog: [{ version: '0.9.0', notes: '- 예전' }] })
+  write(out, 'manifest.json', prev)
+  const run = token => new Promise(resolve => execFile(process.execPath,
+    [path.join(__dirname, '../../tools/build-manifest.js'), '--source', src, '--out', out, '--version', '1.0.0', '--publish', '--no-cdn'],
+    { env: { ...process.env, GITHUB_TOKEN: token, GITHUB_API_URL: `${base}/api`, GITHUB_WEB_URL: base } },
+    (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr })))
+
+  const bad = await run('bad')
+  assert.equal(bad.code, 1)
+  assert.match(bad.stderr, /401.*Bad credentials/)
+  assert.equal(read(out, 'manifest.json'), prev) // 실패한 1.0.0 이 "배포됨" 으로 남지 않는다
+
+  // 예전 도구로 실패해서 1.0.0 이 로컬에만 남은 경우: GitHub 에 없으니 같은 번호로 다시 배포할 수 있다
+  await build({ source: src, out, version: '1.0.0', notes: '- 실패했던 빌드' })
+  const good = await run('good')
+  assert.equal(good.code, 0, good.stderr)
+  assert.match(good.stdout, /pack-1\.0\.0 게시 완료/)
+  const changelog = JSON.parse(read(out, 'manifest.json')).changelog.map(c => c.version)
+  assert.deepEqual(changelog, ['1.0.0', '0.9.0'])
 })

@@ -202,7 +202,7 @@ async function main () {
       for (const p of r.protectedFiles) console.log(`    = ${p}`)
     }
   } catch (e) {
-    console.error(`✘ 패치 실패: ${e.message}`)
+    console.error(`✘ 패치 실패: ${e.message}${e.cause ? ` (${e.cause.code || e.cause.message})` : ''}`)
     failed = true
   }
 
@@ -215,7 +215,7 @@ async function main () {
       await setup.installLoader({ serverDir, manifest: r.manifest, javaPath: java.javaPath, log: console.log })
       console.log(`✔ ${r.loader.type} ${r.loader.version} 서버 설치 완료`)
     } catch (e) {
-      console.error(`✘ ${e.message}`)
+      console.error(`✘ ${e.message}${e.cause ? ` (${e.cause.code || e.cause.message})` : ''}`)
       failed = true
     }
   }
@@ -238,7 +238,7 @@ async function main () {
 
 if (require.main === module) {
   main().catch(e => {
-    console.error(`✘ ${e.message}`)
+    console.error(`✘ ${e.message}${e.cause ? ` (${e.cause.code || e.cause.message})` : ''}`)
     process.exit(1)
   })
 }

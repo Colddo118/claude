@@ -27,6 +27,28 @@ function Run-Node([string[]]$nodeArgs) {
   if ($LASTEXITCODE -ne 0) { throw "명령이 실패했습니다 (node $($nodeArgs[0]))" }
 }
 
+function Plain($secure) {
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+}
+
+# 토큰은 화면에 안 보이게 받는다. 이 칸에서는 Ctrl+V 가 안 먹고 글자 하나(^V)만 들어가므로 모양을 확인한다.
+function Read-Token {
+  Write-Host 'GitHub 토큰을 붙여넣습니다: 창에 마우스 오른쪽 클릭 → Enter (Ctrl+V 는 안 됩니다. 화면엔 * 만 보임)' -ForegroundColor Cyan
+  for ($i = 0; $i -lt 3; $i++) {
+    $secure = Read-Host 'GitHub 토큰' -AsSecureString
+    $plain = (Plain $secure).Trim()
+    if ($plain -match '^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$') {
+      $plain = $null
+      return $secure
+    }
+    $len = $plain.Length
+    $plain = $null
+    Write-Host "토큰 모양이 아닙니다 (입력된 글자 수: $len). github_pat_ 로 시작하는 토큰 전체를 마우스 오른쪽 클릭으로 붙여넣으세요." -ForegroundColor Yellow
+  }
+  throw '토큰을 받지 못했습니다. patch.bat 을 다시 실행하세요.'
+}
+
 function Save-Settings($s) {
   ($s | ConvertTo-Json) | Set-Content $LocalFile -Encoding UTF8
 }
@@ -67,7 +89,16 @@ if (-not $repo) { throw 'pack.config.json 에 "github": "아이디/modpack" 이 
 # --- 1. 버전과 패치노트 ---
 $lastVersion = $null
 $manifestPath = Join-Path $OutDir 'manifest.json'
-if (Test-Path $manifestPath) { $lastVersion = (Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).version }
+# 실제로 GitHub 에 배포된 버전 기준 (업로드가 실패했던 빌드는 치지 않음). 인터넷이 안 되면 로컬 기록.
+try {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  $published = Invoke-RestMethod "https://github.com/$repo/releases/latest/download/manifest.json" -TimeoutSec 15
+  if ($published -is [string]) { $published = $published | ConvertFrom-Json }
+  $lastVersion = $published.version
+  if (-not $lastVersion) { throw 'no version' }
+} catch {
+  if (Test-Path $manifestPath) { $lastVersion = (Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).version }
+}
 $suggest = $null
 if ($lastVersion -match '^(.*\.)(\d+)$') { $suggest = $Matches[1] + ([int]$Matches[2] + 1) }
 Write-Host ''
@@ -105,15 +136,14 @@ if ($settings.token) {
 }
 $tokenIsNew = $false
 if (-not $secure) {
-  $secure = Read-Host 'GitHub 토큰 붙여넣기 (화면에 안 보임)' -AsSecureString
+  $secure = Read-Token
   $tokenIsNew = $true
 }
 
 # --- 3. 빌드 + 업로드 ---
 $kitHashBefore = File-Hash (Join-Path $KitDir 'server-update.js')
-$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
 try {
-  $env:GITHUB_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+  $env:GITHUB_TOKEN = (Plain $secure).Trim()
   $env:SERVER_PACK_KEY = $settings.serverKey
   try {
     Run-Node @("$Tools\build-manifest.js", '--source', $settings.instance, '--out', $OutDir, '--version', $version, '--notes-file', $notesFile, '--publish')
@@ -127,7 +157,6 @@ try {
   }
   Run-Node @("$Tools\make-server-kit.js", '--out', $KitDir, '--repo', $repo)
 } finally {
-  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
   Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:SERVER_PACK_KEY -ErrorAction SilentlyContinue
 }
