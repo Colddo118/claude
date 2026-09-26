@@ -19,7 +19,7 @@ function bundle (entryAbs) {
     if (modules.has(abs)) return modules.get(abs).id
     const rec = { id: modules.size, code: '' }
     modules.set(abs, rec)
-    let code = fs.readFileSync(abs, 'utf8').replace(/^#!.*\n/, '')
+    let code = fs.readFileSync(abs, 'utf8').replace(/^\uFEFF?#![^\n]*\n/, '') // CRLF·BOM 체크아웃에서도
     code = code.replace(/require\((['"])(\.{1,2}\/[^'"]+)\1\)/g, (_m, _q, rel) => {
       let target = path.resolve(path.dirname(abs), rel)
       if (!target.endsWith('.js')) target += '.js'
