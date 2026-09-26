@@ -71,6 +71,7 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   write(src, 'options.txt', 'renderDistance:8')
   write(src, 'logs/latest.log', 'should not be packed')
   write(src, 'saves/world/level.dat', 'should not be packed')
+  write(src, 'mods/.connector/cache.bin', 'mod cache should not be packed')
 
   // v1.0.0 빌드
   const r1 = await build({ source: src, out, version: '1.0.0', notes: '- 첫 배포' })
@@ -96,6 +97,7 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   write(instance, 'journeymap/data/mp/waypoints.json', '{"home":1}') // 미니맵 데이터
   write(instance, 'saves/myworld/level.dat', 'my world')
   write(instance, 'mods/my-own-mod.jar', 'user mod')                // 서버에 없는 모드
+  write(instance, 'mods/.connector/cache.bin', 'cache')              // 모드가 만든 캐시 폴더 (건드리면 안 됨)
 
   // 관리자: v1.1.0 — jei 업데이트, old-mod 삭제, 새 모드 추가, 설정 변경, 기본 옵션 변경
   write(src, 'mods/jei.jar', 'jei-v2')
@@ -105,6 +107,8 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   write(src, 'options.txt', 'renderDistance:6')
   await assert.rejects(build({ source: src, out, version: '1.0.0' }), /이미 1.0.0/)
   const r2 = await build({ source: src, out, version: '1.1.0', notes: '- JEI 업데이트\n- 새 모드 추가' })
+  assert.equal(r2.sizeByDir[0][0], 'mods/')
+  assert.equal(r2.largest.length, 5)
   assert.deepEqual(r2.manifest.changelog.map(c => c.version), ['1.1.0', '1.0.0'])
 
   const manifest = await updater.fetchManifest(baseUrl)
@@ -124,6 +128,7 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   assert.equal(read(instance, 'options.txt'), 'renderDistance:16')
   assert.equal(read(instance, 'journeymap/data/mp/waypoints.json'), '{"home":1}')
   assert.equal(read(instance, 'saves/myworld/level.dat'), 'my world')
+  assert.equal(read(instance, 'mods/.connector/cache.bin'), 'cache')
   // 치운 모드는 백업 폴더에 있다
   const backups = fs.readdirSync(path.join(instance, '.launcher-backup'))
   assert.equal(read(path.join(instance, '.launcher-backup', backups[0]), 'mods/my-own-mod.jar'), 'user mod')

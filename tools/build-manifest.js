@@ -33,7 +33,8 @@ const DEFAULT_CONFIG = {
     'mods', 'config', 'defaultconfigs', 'kubejs', 'scripts',
     'resourcepacks', 'shaderpacks', 'options.txt', 'servers.dat'
   ],
-  exclude: ['**/*.disabled', '**/.DS_Store', '**/Thumbs.db', 'config/**/*.bak'],
+  // 숨김 폴더(예: mods/.connector 같은 모드 캐시)는 게임이 알아서 다시 만드는 캐시라 배포하지 않는다.
+  exclude: ['**/*.disabled', '**/.DS_Store', '**/Thumbs.db', 'config/**/*.bak', '**/.*/**'],
   // 처음 설치할 때만 넣고 이후엔 사용자가 바꾼 값을 유지할 파일들
   once: ['options.txt', 'servers.dat'],
   // 이 폴더 안에서 매니페스트에 없는 파일은 백업 폴더로 치운다 (서버와 모드 불일치 방지)
@@ -225,9 +226,20 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   const manifestFile = path.join(outDir, 'manifest.json')
   await fsp.writeFile(manifestFile, JSON.stringify(manifest, null, 2))
 
+  // 어디가 큰지 보여주기 위한 요약: 폴더별 합계, 가장 큰 파일
+  const byDir = {}
+  for (const f of files) {
+    const dir = f.path.includes('/') ? f.path.split('/')[0] + '/' : f.path
+    byDir[dir] = (byDir[dir] || 0) + f.size
+  }
+  const sizeByDir = Object.entries(byDir).sort((a, b) => b[1] - a[1])
+  const largest = [...files].sort((a, b) => b.size - a.size).slice(0, 10)
+
   return {
     manifest,
     mode,
+    sizeByDir,
+    largest,
     repo,
     newObjects,
     bundleFile,
@@ -254,6 +266,10 @@ async function main () {
   console.log(`  파일 ${manifest.files.length}개 (총 ${mb(r.totalBytes)})`)
   console.log(`  - 커스포지 CDN 에서 받음: ${r.cdnCount}개`)
   console.log(`  - 직접 올릴 파일: ${manifest.files.length - r.cdnCount}개 (${mb(r.selfHostedBytes)})`)
+  console.log('  폴더별 크기:')
+  for (const [dir, size] of r.sizeByDir.slice(0, 8)) console.log(`    ${mb(size).padStart(10)}  ${dir}`)
+  console.log('  가장 큰 파일:')
+  for (const f of r.largest) console.log(`    ${mb(f.size).padStart(10)}  ${f.path}${f.url ? '  (CDN)' : ''}`)
   if (r.cdnFailed.length) {
     console.log(`  ! CDN 주소 확인 실패로 직접 올리는 파일 ${r.cdnFailed.length}개: ${r.cdnFailed.slice(0, 5).join(', ')}${r.cdnFailed.length > 5 ? ' ...' : ''}`)
   }

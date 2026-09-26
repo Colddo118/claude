@@ -122,8 +122,9 @@ async function planUpdate ({ manifest, instanceDir, state, onProgress }) {
 
   const removalSet = new Set(removals.map(p => p.toLowerCase()))
   const strays = []
+  // strictDirs 는 폴더 바로 아래 파일만 정리한다. 하위 폴더(모드 캐시 등)는 모드가 만든 것이라 건드리지 않는다.
   for (const dir of manifest.strictDirs || []) {
-    for (const p of await walkFiles(instanceDir, dir)) {
+    for (const p of (await walkFiles(instanceDir, dir)).filter(p => !p.slice(dir.length + 1).includes('/'))) {
       const key = p.toLowerCase()
       if (!manifestPaths.has(key) && !removalSet.has(key)) strays.push(p)
     }
