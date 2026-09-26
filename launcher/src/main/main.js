@@ -253,10 +253,10 @@ ipcMain.handle('game:launch', () => exclusive(async () => {
 
 function createWindow () {
   win = new BrowserWindow({
-    width: 980,
-    height: 620,
-    minWidth: 820,
-    minHeight: 540,
+    width: 1200,
+    height: 740,
+    minWidth: 1000,
+    minHeight: 640,
     title: config.appName,
     backgroundColor: '#11131a',
     autoHideMenuBar: true,

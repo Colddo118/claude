@@ -63,7 +63,7 @@
 
 ## 창 크기
 
-`launcher/src/main/main.js` 의 `createWindow` 에서 기본 980×620, 최소 820×540 입니다.
+`launcher/src/main/main.js` 의 `createWindow` 에서 기본 1200×740, 최소 1000×640 입니다.
 디자인에 맞춰 이 숫자만 바꾸는 건 괜찮습니다.
 
 ## 앱 아이콘 (exe, 작업표시줄, 바로가기)
