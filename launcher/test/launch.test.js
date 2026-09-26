@@ -147,3 +147,14 @@ test('필요한 자바 버전', () => {
   assert.equal(requiredJavaMajor({}, { javaVersion: { majorVersion: 16 } }), 17)
   assert.equal(requiredJavaMajor({}, {}), 8)
 })
+
+test('게임 파일 받기: 일시적 실패는 다시 시도하고, 끝내 실패하면 읽을 수 있는 메시지', async () => {
+  const { withRetry } = require('../src/main/game')
+  let calls = 0
+  assert.equal(await withRetry(async () => { if (++calls < 3) throw new Error('ECONNRESET'); return 'ok' }), 'ok')
+  assert.equal(calls, 3)
+
+  const agg = new AggregateError([new AggregateError([Object.assign(new Error('connect ETIMEDOUT 1.2.3.4:443'), { code: 'ETIMEDOUT' })]), new Error('b')])
+  await assert.rejects(withRetry(async () => { throw agg }, 2), /게임 파일 2개를 받지 못했습니다.*ETIMEDOUT 1\.2\.3\.4/)
+  await assert.rejects(withRetry(async () => { throw new Error('plain') }, 1), /^Error: plain$/)
+})

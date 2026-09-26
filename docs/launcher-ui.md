@@ -18,17 +18,20 @@
 | --- | --- |
 | `app-name` | 런처 이름 (launcher.config.json 의 appName 이 들어감) |
 | `pack-meta` | "모드팩 이름 · Minecraft 1.21.1 · neoforge ..." |
-| `account-name`, `login-btn`, `logout-btn` | 계정 표시 / 로그인 / 로그아웃 |
+| `account-name`, `account-sub`, `login-btn`, `logout-btn` | 계정 이름 / 그 아래 보조 줄 / 로그인 / 로그아웃 |
 | `link-discord`, `link-website` | 링크 버튼 (config 에 주소가 없으면 자동으로 숨김) |
 | `changelog` | 패치노트 목록이 채워지는 곳 |
 | `update-badge` | "새 업데이트" 배지 |
-| `status-text` | 상태 문구 (진행 상황, 오류) |
+| `status-text` | 상태 문구 (굵은 한 줄, 오류) |
+| `status-detail` | 상태 아래 흐린 보조 줄 (파일 수·용량 등, 비면 숨김) |
 | `progress-bar` | 진행률 막대 (JS 가 `width` 를 % 로 바꿈) |
-| `version-text` | "설치된 버전 · 최신 버전" |
+| `progress-pct` | 진행 중일 때만 나오는 % |
+| `facts`, `version-text`, `server-row`, `server-text` | 버전 (`v1.0.1 → v1.0.2`) · 서버 주소 |
 | `play-btn` | 메인 버튼 (설치 후 시작 / 업데이트 후 시작 / 게임 시작 / 실행 중) |
 | `settings-btn` | 설정 열기 |
 | `settings` | 설정 창 (`<dialog>` 요소여야 함, `<form method="dialog">` 포함) |
 | `mem-input`, `mem-value`, `mem-total` | 메모리 슬라이더 / 현재 값 / PC 전체 메모리 |
+| `launcher-version` | 설정 창 제목 오른쪽 런처 버전 |
 | `autoconnect-input`, `hide-input`, `jvm-input` | 설정 항목 |
 | `open-folder-btn`, `open-logs-btn`, `repair-btn` | 게임 폴더 / 로그 폴더 / 파일 검사·복구 |
 

@@ -40,6 +40,26 @@ function runTask (task, onProgress) {
   })
 }
 
+// 파일 수천 개를 받다 보면 몇 개는 일시적으로 실패한다. 받은 건 남아 있으니 몇 번 다시 시도하면 대개 끝난다.
+async function withRetry (fn, times = 3) {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn()
+    } catch (e) {
+      if (i >= times) throw friendlyError(e)
+    }
+  }
+}
+
+// xmcl 은 여러 파일 실패를 AggregateError(메시지 없음)로 던진다 → 사람이 읽을 수 있게
+function friendlyError (e) {
+  if (!e || !Array.isArray(e.errors)) return e
+  let first = e
+  while (first && Array.isArray(first.errors) && first.errors.length) first = first.errors[0]
+  const detail = first && (first.message || first.code || String(first))
+  return new Error(`게임 파일 ${e.errors.length}개를 받지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.${detail ? ` (${detail})` : ''}`)
+}
+
 // ---------------------------------------------------------------- Java
 
 // consoleExe: 서버처럼 콘솔 창에서 돌릴 때는 javaw.exe 대신 java.exe
@@ -128,7 +148,7 @@ async function ensureVanilla (mc, minecraftVersion, onStatus, onProgress) {
     }
     const meta = list.versions.find(v => v.id === minecraftVersion)
     if (!meta) throw new Error(`마인크래프트 ${minecraftVersion} 버전을 찾을 수 없습니다`)
-    await runTask(installer.installTask(meta, mc), onProgress)
+    await withRetry(() => runTask(installer.installTask(meta, mc), onProgress))
   }
   return JSON.parse(await fsp.readFile(jsonPath, 'utf8'))
 }
@@ -219,7 +239,7 @@ async function launchGame ({ manifest, dirs, authorization, settings, launcher, 
 
   // 라이브러리/에셋이 빠졌거나 깨졌으면 받는다. 로더 파일이 망가져 있으면 로더를 한 번 다시 설치한다.
   onStatus && onStatus('게임 파일 확인 중...')
-  const checkDeps = async () => runTask(installer.installDependenciesTask(await core.Version.parse(mc, versionId)), progress('게임 파일 받는 중'))
+  const checkDeps = () => withRetry(async () => runTask(installer.installDependenciesTask(await core.Version.parse(mc, versionId)), progress('게임 파일 받는 중')))
   try {
     await checkDeps()
   } catch (e) {
@@ -259,4 +279,4 @@ function totalMemoryMB () {
   return Math.floor(os.totalmem() / 1024 / 1024)
 }
 
-module.exports = { launchGame, buildLaunchOptions, ensureJava, ensureLoader, requiredJavaMajor, totalMemoryMB, serverArgs, jvmArgs }
+module.exports = { friendlyError, withRetry, launchGame, buildLaunchOptions, ensureJava, ensureLoader, requiredJavaMajor, totalMemoryMB, serverArgs, jvmArgs }

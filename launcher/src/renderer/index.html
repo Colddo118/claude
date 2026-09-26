@@ -14,7 +14,10 @@
       <span class="brand-name">모드팩 런처</span>
     </div>
     <nav class="tabs">
-      <span id="account-name" class="muted">로그인 안 됨</span>
+      <span id="account" class="who">
+        <span id="account-name">로그인 안 됨</span>
+        <span id="account-sub" class="muted small">로그인이 필요해요</span>
+      </span>
       <button id="login-btn" class="tab">로그인</button>
       <button id="logout-btn" class="tab hidden">로그아웃</button>
       <button id="link-website" class="tab hidden">웹사이트</button>
@@ -27,8 +30,15 @@
     <h1 id="app-name">런처</h1>
     <div class="install">
       <div id="status-text">준비 중...</div>
-      <div class="progress"><div id="progress-bar"></div></div>
-      <div id="version-text" class="muted small"></div>
+      <div id="status-detail" class="muted small"></div>
+      <div class="progress-row">
+        <div class="progress"><div id="progress-bar"></div></div>
+        <span id="progress-pct" class="pct"></span>
+      </div>
+      <dl id="facts" class="facts hidden">
+        <div><dt>버전</dt><dd id="version-text">-</dd></div>
+        <div id="server-row" class="hidden"><dt>서버</dt><dd id="server-text"></dd></div>
+      </dl>
     </div>
 
     <section class="notes">
@@ -49,7 +59,7 @@
 
   <dialog id="settings">
     <form method="dialog" class="settings-form">
-      <div class="dialog-title"><h2>설정</h2></div>
+      <div class="dialog-title"><h2>설정</h2><span id="launcher-version" class="muted small"></span></div>
 
       <section class="well">
         <div class="well-head">
