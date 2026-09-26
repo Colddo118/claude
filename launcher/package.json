@@ -8,7 +8,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "build:win": "electron-builder --win nsis",
+    "build:win": "electron-builder --win nsis-web",
     "build:mac": "electron-builder --mac dmg",
     "build:linux": "electron-builder --linux AppImage"
   },
@@ -31,7 +31,7 @@
     "electronLanguages": ["ko", "en-US"],
     "compression": "maximum",
     "win": {
-      "target": "nsis"
+      "target": "nsis-web"
     },
     "nsis": {
       "oneClick": true,
@@ -41,6 +41,10 @@
       "createStartMenuShortcut": true,
       "shortcutName": "KubejsRPG",
       "artifactName": "KubejsRPG-Setup-${version}.${ext}"
+    },
+    "nsisWeb": {
+      "artifactName": "KubejsRPG-Setup.${ext}",
+      "appPackageUrl": "https://github.com/colddo118/modpack/releases/download/launcher/KubejsRPG-x64.nsis.7z"
     },
     "mac": {
       "category": "public.app-category.games"

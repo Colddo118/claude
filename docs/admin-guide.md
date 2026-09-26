@@ -137,6 +137,19 @@ Attempted to load class net/minecraft/client/... for invalid dist DEDICATED_SERV
 - 저장된 토큰이 만료되면 patch.bat 이 알려주고 다음 실행 때 새로 물어봅니다.
 - 토큰을 채팅·디스코드에 붙여넣지 마세요. 노출되면 GitHub 에서 바로 Delete.
 
+## 런처 배포: `launcher.bat`
+
+런처 프로그램 자체를 고쳤을 때(디자인, 기능)만 씁니다. 모드팩 패치와는 상관없습니다.
+
+1. 저장소 폴더의 **`launcher.bat` 더블클릭** → `y`
+2. 빌드(몇 분) 후 GitHub `modpack` 저장소의 **`launcher` 릴리스**에 올라갑니다 (토큰은 patch.bat 이 저장한 것 사용).
+3. 끝나면 폴더가 열립니다. 그 안의 **`KubejsRPG-Setup.exe`(1MB 남짓)** 를 친구들에게 디스코드로 보내면 됩니다.
+
+- 친구가 설치 파일을 실행하면 GitHub 에서 런처 본체(약 100MB)를 받아 설치합니다.
+- 설치 파일 주소는 버전과 상관없이 고정이라, **예전에 나눠 준 설치 파일로도 항상 최신 런처가 깔립니다.**
+- `launcher` 릴리스는 "사전 배포" 로 만들어져서 모드팩 업데이트(최신 릴리스)와 섞이지 않습니다. 지우지 마세요.
+- 버전 번호는 `launcher/package.json` 의 `version` 입니다 (설정 창 제목 옆에 보임).
+
 ## (선택) 같은 네트워크면 서버 폴더에 직접 반영
 
 서버 폴더를 윈도우 네트워크로 공유했다면 `patch.local.json` 의 `"serverDir"` 에

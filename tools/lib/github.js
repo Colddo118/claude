@@ -43,7 +43,7 @@ async function api (token, method, url, body, headers = {}) {
   if (!res.ok) {
     let msg = text
     try { msg = JSON.parse(text).message } catch {}
-    throw new Error(`GitHub API ${method} ${new URL(url).pathname} 실패 (${res.status}): ${msg}`)
+    throw Object.assign(new Error(`GitHub API ${method} ${new URL(url).pathname} 실패 (${res.status}): ${msg}`), { status: res.status })
   }
   return text ? JSON.parse(text) : null
 }
@@ -78,4 +78,4 @@ async function publishRelease ({ repo, token, version, notes, files }) {
   }
 }
 
-module.exports = { publishRelease, assetUrl, releaseDownloadPrefix, manifestUrl, releaseTag }
+module.exports = { api, API, publishRelease, assetUrl, releaseDownloadPrefix, manifestUrl, releaseTag }
