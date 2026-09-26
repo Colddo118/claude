@@ -1,0 +1,54 @@
+name: launcher
+
+on:
+  push:
+    branches: ['**']
+    tags: ['launcher-v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: launcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: launcher/package-lock.json
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: npm test
+
+  # launcher-v* 태그를 푸시하거나 Actions 탭에서 수동 실행하면 윈도우 설치 파일을 만든다.
+  build-windows:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/launcher-v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: launcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: launcher/package-lock.json
+      - run: npm ci
+      - run: npx electron-builder --win nsis --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-windows
+          path: launcher/dist/*.exe
+      - if: startsWith(github.ref, 'refs/tags/launcher-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: launcher/dist/*.exe

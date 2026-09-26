@@ -1,0 +1,13 @@
+{
+  "packName": "우리 서버 모드팩",
+  "server": { "address": "play.example.com", "port": 25565 },
+  "memory": { "recommendedMB": 6144 },
+
+  "include": [
+    "mods", "config", "defaultconfigs", "kubejs", "scripts",
+    "resourcepacks", "shaderpacks", "options.txt", "servers.dat"
+  ],
+  "exclude": ["**/*.disabled", "**/.DS_Store", "**/Thumbs.db", "config/**/*.bak"],
+  "once": ["options.txt", "servers.dat"],
+  "strictDirs": ["mods"]
+}
