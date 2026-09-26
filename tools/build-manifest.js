@@ -54,13 +54,18 @@ const DEFAULT_CONFIG = {
   changelogLimit: 30
 }
 
+const FLAG_OPTIONS = ['force', 'help', 'publish', 'no-cdn', 'no-url-check']
+const VALUE_OPTIONS = ['source', 'out', 'version', 'notes', 'notes-file', 'config', 'github']
+
 function parseArgs (argv) {
   const args = {}
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (!a.startsWith('--')) throw new Error(`알 수 없는 인자: ${a}`)
     const key = a.slice(2)
-    if (['force', 'help', 'publish', 'no-cdn', 'no-url-check'].includes(key)) {
+    // 오타(예: --publishcd)를 조용히 무시하면 업로드가 빠진 채 끝나므로 바로 알려준다
+    if (!FLAG_OPTIONS.includes(key) && !VALUE_OPTIONS.includes(key)) throw new Error(`알 수 없는 옵션: ${a} (--help 로 목록 확인)`)
+    if (FLAG_OPTIONS.includes(key)) {
       args[key] = true
     } else {
       if (argv[i + 1] === undefined) throw new Error(`${a} 에 값이 필요합니다`)
@@ -76,7 +81,7 @@ const USAGE = `사용법:
 
   --source        커스포지 인스턴스 폴더 (mods, config 등이 있는 곳)
   --out           결과물 폴더. 기존 manifest.json 이 있으면 패치노트 이력을 이어 붙인다
-  --version       새 모드팩 버전 (예: 1.3.0)
+  --version       새 모드팩 버전 (예: 1.3.0). 생략하면 이전 버전 +1
   --config        설정 파일. 생략하면 <source>/pack.config.json 을 찾는다
   --publish       GitHub 모드일 때 릴리스까지 자동으로 올린다 (GITHUB_TOKEN 환경변수 필요)
   --no-cdn        커스포지 CDN 을 쓰지 않고 모든 파일을 직접 올린다
@@ -197,6 +202,14 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
     for (const f of g.files) f.bundle = g.id
   }
   return { releaseDir, reused }
+}
+
+function nextVersion (v) {
+  const parts = String(v).split('.')
+  const last = parts.length - 1
+  if (!/^\d+$/.test(parts[last])) throw new Error(`이전 버전 ${v} 에서 다음 버전을 정할 수 없습니다. --version 을 적어주세요.`)
+  parts[last] = String(Number(parts[last]) + 1)
+  return parts.join('.')
 }
 
 async function build ({ source, out, version, notes, config: configPath, force, github: githubArg, ...flags }) {
@@ -339,6 +352,11 @@ const mb = n => `${(n / 1024 / 1024).toFixed(1)} MB`
 
 async function main () {
   const args = parseArgs(process.argv.slice(2))
+  if (!args.version && args.out && !args.help) {
+    // 버전을 안 적으면 이전 버전의 마지막 숫자를 +1 (1.0.1 → 1.0.2)
+    const previous = await readJsonIfExists(path.join(path.resolve(args.out), 'manifest.json'))
+    if (previous) args.version = nextVersion(previous.version)
+  }
   if (args.help || !args.source || !args.out || !args.version) {
     console.log(USAGE)
     process.exit(args.help ? 0 : 1)
@@ -390,4 +408,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { build, detectFromCurseForge, DEFAULT_CONFIG }
+module.exports = { build, detectFromCurseForge, nextVersion, parseArgs, readJsonIfExists, sha1File, walk, DEFAULT_CONFIG }

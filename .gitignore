@@ -3,3 +3,5 @@ launcher/dist/
 pack-dist/
 *.log
 .DS_Store
+pack-dist-gh/
+patch.local.json
