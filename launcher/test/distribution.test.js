@@ -115,7 +115,11 @@ test('커스포지 CDN + GitHub 릴리스 배포: 설치, 부분 업데이트, �
   write(path.join(tmp, 'www'), 'cdn/files/1001/jei.jar', 'jei-bytes')
   write(path.join(tmp, 'www'), 'cdn/files/1002/create.jar', 'create-bytes')
 
-  const r1 = await build({ source: src, out, version: '1.0.0', notes: '- 첫 배포' })
+  // 업로드 안 한 채로 같은 버전을 --force 로 다시 빌드해도, 없는 파일을 "재사용" 하면 안 된다
+  const r0 = await build({ source: src, out, version: '1.0.0', notes: '- 첫 배포' })
+  const r1 = await build({ source: src, out, version: '1.0.0', notes: '- 첫 배포', force: true })
+  assert.equal(r1.reused, 0)
+  assert.deepEqual(r1.newAssets.map(f => path.basename(f)).sort(), r0.newAssets.map(f => path.basename(f)).sort())
   assert.equal(r1.mode, 'github')
   assert.equal(r1.cdnCount, 2)
   assert.deepEqual(r1.cdnFailed, ['mods/broken.jar'])

@@ -163,10 +163,14 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
   for (const b of (previous && previous.bundles) || []) known.set(`b:${b.sha1}`, b.url)
 
   let reused = 0
-  const addAsset = async (key, name, produce) => {
-    if (known.has(key)) {
+  const thisRelease = github.assetUrl(repo, version, '')
+  const addAsset = async (key, name, size, produce) => {
+    // 이전 릴리스에 같은 파일이 실제로 올라가 있을 때만 재사용한다.
+    // (같은 버전을 --force 로 다시 빌드했거나, 빌드만 하고 업로드는 안 한 버전이면 다시 올린다)
+    const prev = known.get(key)
+    if (prev && !prev.startsWith(thisRelease) && await checkUrl(prev, size)) {
       reused++
-      return known.get(key)
+      return prev
     }
     const dest = path.join(releaseDir, name)
     if (!newAssets.includes(dest)) {
@@ -179,7 +183,7 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
   }
 
   for (const f of selfHosted.filter(f => f.size >= largeFile)) {
-    f.url = await addAsset(`f:${f.sha1}`, `f-${f.sha1}`, dest => fsp.copyFile(path.join(sourceDir, ...f.path.split('/')), dest))
+    f.url = await addAsset(`f:${f.sha1}`, `f-${f.sha1}`, f.size, dest => fsp.copyFile(path.join(sourceDir, ...f.path.split('/')), dest))
   }
 
   const tmp = path.join(releaseDir, '.building.zip')
@@ -187,7 +191,7 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
     await writeZip(tmp, g.files.map(f => ({ name: f.path, file: path.join(sourceDir, ...f.path.split('/')) })))
     const sha1 = await sha1File(tmp)
     const size = (await fsp.stat(tmp)).size
-    const url = await addAsset(`b:${sha1}`, `b-${sha1}.zip`, dest => fsp.rename(tmp, dest))
+    const url = await addAsset(`b:${sha1}`, `b-${sha1}.zip`, size, dest => fsp.rename(tmp, dest))
     await fsp.rm(tmp, { force: true })
     bundles.push({ id: g.id, url, sha1, size })
     for (const f of g.files) f.bundle = g.id
@@ -350,7 +354,8 @@ async function main () {
   console.log('  폴더별 크기:')
   for (const [dir, size] of r.sizeByDir.slice(0, 8)) console.log(`    ${mb(size).padStart(10)}  ${dir}`)
   console.log('  가장 큰 파일:')
-  for (const f of r.largest) console.log(`    ${mb(f.size).padStart(10)}  ${f.path}${f.url ? '  (CDN)' : ''}`)
+  const source = f => !f.url ? '' : r.repo && f.url.startsWith(github.releaseDownloadPrefix(r.repo)) ? '  (GitHub)' : '  (CDN)'
+  for (const f of r.largest) console.log(`    ${mb(f.size).padStart(10)}  ${f.path}${source(f)}`)
   if (r.cdnFailed.length) {
     console.log(`  ! CDN 주소 확인 실패로 직접 올리는 파일 ${r.cdnFailed.length}개: ${r.cdnFailed.slice(0, 5).join(', ')}${r.cdnFailed.length > 5 ? ' ...' : ''}`)
   }
