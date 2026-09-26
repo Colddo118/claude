@@ -122,6 +122,12 @@ button:not(.tab):disabled {
   color: var(--dis-text);
   cursor: default;
 }
+/* 보조 버튼(설정 등) = 어두운 창 틀 색 + 밝은 글자. 밝은 OFF 색은 어두운 화면에서 꺼진 버튼처럼 보였다 */
+button.ghost {
+  --p-hi: #4a4034; --p-lo: #352d24; --p-edge: #16120d;
+  color: var(--text);
+}
+button.ghost:hover:not(:disabled) { --fa: #5a4e3c; --fb: #433a2e; }
 button.primary {
   --p-hi: var(--go-hi); --p-lo: var(--go-lo); --p-edge: var(--go-edge);
   font-family: var(--bold);
@@ -165,6 +171,7 @@ button.tab:hover { color: var(--gold); box-shadow: inset 0 calc(var(--u) * -1) 0
   image-rendering: pixelated;
 }
 .brand-name { font: 700 20px/1 var(--bold); color: var(--gold); }
+.brand:not(:has(.brand-name)) { visibility: hidden; } /* 글자 없이 아이콘만 떠 있으면 어색해서 숨김 (자리는 유지) */
 .tabs { display: flex; align-items: center; gap: calc(var(--u) * 8); text-shadow: 0 var(--u) 0 #0e0b08, 0 0 calc(var(--u) * 3) #0e0b08; }
 .who { display: flex; align-items: baseline; gap: calc(var(--u) * 2); }
 #account-name { font-family: var(--bold); font-weight: 700; color: var(--gold); }
@@ -207,7 +214,7 @@ button.tab:hover { color: var(--gold); box-shadow: inset 0 calc(var(--u) * -1) 0
 /* 패치노트 — 어두운 반투명 칸 */
 .notes {
   min-height: 0;
-  max-height: calc(var(--u) * 58);
+  max-height: calc(var(--u) * 80);
   display: flex;
   flex-direction: column;
   background: var(--well);

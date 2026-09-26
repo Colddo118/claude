@@ -21,7 +21,7 @@
 | `account-name`, `account-sub`, `login-btn`, `logout-btn` | 계정 이름 / 그 아래 보조 줄 / 로그인 / 로그아웃 |
 | `link-discord`, `link-website` | 링크 버튼 (config 에 주소가 없으면 자동으로 숨김) |
 | `changelog` | 패치노트 목록이 채워지는 곳 |
-| `update-badge` | "새 업데이트" 배지 |
+| `update-badge` | "새 업데이트" 배지 (지금은 상태 줄과 NEW 표시로 충분해서 띄우지 않음) |
 | `status-text` | 상태 문구 (굵은 한 줄, 오류) |
 | `status-detail` | 상태 아래 흐린 보조 줄 (파일 수·용량 등, 비면 숨김) |
 | `progress-bar` | 진행률 막대 (JS 가 `width` 를 % 로 바꿈) |

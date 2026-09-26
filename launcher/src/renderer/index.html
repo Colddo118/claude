@@ -11,7 +11,6 @@
   <header class="topbar">
     <div class="brand">
       <img class="logo" src="assets/logo.png" alt="" aria-hidden="true">
-      <span class="brand-name">모드팩 런처</span>
     </div>
     <nav class="tabs">
       <span id="account" class="who">
@@ -26,7 +25,7 @@
   </header>
 
   <main class="hero">
-    <p id="pack-meta" class="meta">서버 정보를 불러오는 중...</p>
+    <p id="pack-meta" class="meta hidden"></p>
     <h1 id="app-name">런처</h1>
     <div class="install">
       <div id="status-text">준비 중...</div>
@@ -36,7 +35,7 @@
         <span id="progress-pct" class="pct"></span>
       </div>
       <dl id="facts" class="facts hidden">
-        <div><dt>버전</dt><dd id="version-text">-</dd></div>
+        <div class="hidden"><dt>버전</dt><dd id="version-text">-</dd></div>
         <div id="server-row" class="hidden"><dt>서버</dt><dd id="server-text"></dd></div>
       </dl>
     </div>
@@ -67,7 +66,7 @@
           <strong id="mem-value"></strong>
         </div>
         <input id="mem-input" type="range" min="1024" step="512" aria-label="메모리">
-        <span class="muted small">PC 전체 메모리 <span id="mem-total"></span></span>
+        <span class="muted small">이 PC 메모리 <span id="mem-total"></span></span>
       </section>
 
       <section class="well">
@@ -79,7 +78,7 @@
           <input id="hide-input" type="checkbox"> 게임 실행 중 런처 숨기기
         </label>
         <label class="field">
-          <span>추가 JVM 인자 <span class="muted">(모르면 비워두세요)</span></span>
+          <span>JVM 인자 <span class="muted">(고급 · 보통 비워 둠)</span></span>
           <input id="jvm-input" type="text" placeholder="-XX:+UseG1GC">
         </label>
       </section>

@@ -117,6 +117,7 @@ function renderChangelog (entries) {
 // ---------------------------------------------------------------- state → UI
 
 function renderAccount () {
+  renderPlay()
   ui.accountName.textContent = account ? account.name : '로그인 안 됨'
   ui.accountSub.textContent = account ? '마이크로소프트 계정' : '로그인이 필요해요'
   $('account').classList.toggle('signed-out', !account)
@@ -138,8 +139,11 @@ function renderPlay () {
     b.disabled = busy
     return
   }
-  if (pack.needsUpdate) {
-    b.textContent = pack.firstInstall ? '설치 후 시작' : '업데이트 후 시작'
+  if (!account) {
+    b.textContent = '로그인하고 시작'
+    if (pack.needsUpdate) b.classList.add('update')
+  } else if (pack.needsUpdate) {
+    b.textContent = pack.firstInstall ? '설치하고 시작' : '업데이트하고 시작'
     b.classList.add('update')
   } else {
     b.textContent = '게임 시작'
@@ -159,18 +163,18 @@ function renderPack () {
   $('facts').classList.remove('hidden')
   $('server-row').classList.toggle('hidden', !pack.server)
   ui.server.textContent = pack.server || ''
-  ui.badge.classList.toggle('hidden', !(pack.needsUpdate && !pack.firstInstall && pack.versionChanged))
+  // "새 업데이트" 표시는 상태 줄과 패치노트의 NEW 로 충분해서 따로 띄우지 않는다
   renderChangelog(pack.changelog)
 
-  const size = `파일 ${count(pack.downloadCount)}개 · ${formatBytes(pack.downloadBytes)}`
+  const size = formatBytes(pack.downloadBytes)
   if (!pack.needsUpdate) {
-    setStatus('최신 버전이에요', { detail: '바로 접속할 수 있어요.' })
+    setStatus('준비 완료', { detail: `v${pack.installedVersion}` })
   } else if (pack.firstInstall) {
-    setStatus('처음 설치가 필요해요', { detail: size })
+    setStatus('처음 설치', { detail: `v${pack.remoteVersion} · ${size}` })
   } else if (pack.versionChanged) {
     setStatus(`새 버전 v${pack.remoteVersion}`, { detail: size })
   } else {
-    setStatus('고쳐야 할 파일이 있어요', { detail: `손상되거나 바뀐 파일 ${count(pack.downloadCount + pack.removalCount + pack.strayCount)}개` })
+    setStatus('파일 복구 필요', { detail: `${count(pack.downloadCount + pack.removalCount + pack.strayCount)}개` })
   }
   // 최신이면 막대를 꽉 채워 "준비 완료" 로 보이게
   setProgress(pack.needsUpdate ? 0 : 1, 1)
@@ -223,7 +227,7 @@ async function login () {
     setStatus('마이크로소프트 로그인 창에서 로그인해 주세요...')
     account = await api.login()
     renderAccount()
-    setStatus(`${account.name} 님, 반가워요`, { detail: '로그인했습니다.' })
+    setStatus(`${account.name} 님, 반가워요`)
     return account
   })
 }
@@ -236,17 +240,17 @@ async function play () {
     gameRunning = true
     pack = { ...pack, needsUpdate: false, firstInstall: false, installedVersion: pack.remoteVersion, changelog: pack.changelog.map(c => ({ ...c, isNew: false })) }
     renderPack()
-    setStatus('게임 실행 중', { detail: '즐거운 시간 되세요!' })
+    setStatus('게임 실행 중')
     setProgress(1, 1)
   })
 }
 
 api.onProgress(p => {
   if (p.phase === 'download') {
-    setStatus('모드팩 받는 중', { detail: `${formatPair(p.current, p.total)} · 파일 ${count(p.files)} / ${count(p.fileTotal)}` })
+    setStatus('모드팩 받는 중', { detail: formatPair(p.current, p.total) })
     setProgress(p.current, p.total, true)
   } else if (p.phase === 'verify') {
-    setStatus('파일 확인 중', { detail: `${count(p.current)} / ${count(p.total)}개` })
+    setStatus('파일 확인 중')
     setProgress(p.current, p.total, true)
   } else if (p.text) {
     // 게임 설치 단계는 "마인크래프트 설치 중 45%" 처럼 온다 → 글자와 % 를 나눠서 표시
@@ -314,13 +318,18 @@ $('repair-btn').addEventListener('click', async () => {
   await run(async () => {
     pack = await api.repairPack()
     renderPack()
-    setStatus('파일 검사 완료', { detail: '모든 파일을 검사하고 복구했습니다.' })
+    setStatus('파일 검사 완료')
   })
 })
 
 // ---------------------------------------------------------------- boot
 
 ui.play.addEventListener('click', play)
+// 창에서 Enter = 메인 버튼 (설정 창이 열려 있거나 입력 칸에 있을 때는 제외)
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || dialog.open || e.target.closest('input, button, textarea')) return
+  if (!ui.play.disabled) ui.play.click()
+})
 ui.loginBtn.addEventListener('click', login)
 ui.logoutBtn.addEventListener('click', async () => {
   account = await api.logout()
