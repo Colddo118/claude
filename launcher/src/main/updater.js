@@ -141,11 +141,12 @@ async function planUpdate ({ manifest, instanceDir, state, onProgress }) {
     }
   }
 
-  // 묶음(zip)에서 꺼낼 파일이 하나라도 있으면 zip 전체를 한 번 받는다.
-  const needsBundle = downloads.some(f => fileSource(manifest, f) === 'bundle')
+  // 묶음(zip)은 그 안에서 꺼낼 파일이 하나라도 있을 때만, 묶음째 한 번 받는다.
+  const neededBundles = new Set(downloads.filter(f => fileSource(manifest, f) === 'bundle').map(f => f.bundle))
   const downloadBytes = downloads
     .filter(f => fileSource(manifest, f) !== 'bundle')
-    .reduce((n, f) => n + f.size, needsBundle ? manifest.bundle.size : 0)
+    .reduce((n, f) => n + f.size, 0) +
+    (manifest.bundles || []).filter(b => neededBundles.has(b.id)).reduce((n, b) => n + b.size, 0)
 
   return {
     fromVersion: state.installedVersion,
@@ -329,12 +330,11 @@ async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, sta
   const bundled = plan.downloads.filter(f => fileSource(manifest, f) === 'bundle')
 
   try {
-    if (bundled.length) {
-      const b = manifest.bundle
+    for (const b of (manifest.bundles || []).filter(b => bundled.some(f => f.bundle === b.id))) {
       const zipFile = path.join(instanceDir, '.launcher-tmp', `bundle-${b.sha1}.zip`)
       await downloadVerified({ url: new URL(b.url, manifestUrl).toString(), dest: zipFile, sha1: b.sha1, size: b.size, signal, onBytes })
       try {
-        await extractFromBundle(zipFile, bundled, instanceDir, record)
+        await extractFromBundle(zipFile, bundled.filter(f => f.bundle === b.id), instanceDir, record)
       } finally {
         await fsp.rm(path.dirname(zipFile), { recursive: true, force: true })
       }

@@ -12,16 +12,19 @@ function releaseTag (version) {
   return `pack-${version}`
 }
 
-function bundleName (version) {
-  return `pack-${version}.zip`
+// 테스트에서 가짜 서버로 바꿀 수 있게 환경변수로 뺐다
+const WEB = () => process.env.GITHUB_WEB_URL || 'https://github.com'
+
+function releaseDownloadPrefix (repo) {
+  return `${WEB()}/${repo}/releases/download/`
 }
 
-function bundleUrl (repo, version) {
-  return `https://github.com/${repo}/releases/download/${releaseTag(version)}/${bundleName(version)}`
+function assetUrl (repo, version, name) {
+  return `${releaseDownloadPrefix(repo)}${releaseTag(version)}/${name}`
 }
 
 function manifestUrl (repo) {
-  return `https://github.com/${repo}/releases/latest/download/manifest.json`
+  return `${WEB()}/${repo}/releases/latest/download/manifest.json`
 }
 
 async function api (token, method, url, body, headers = {}) {
@@ -64,7 +67,7 @@ async function publishRelease ({ repo, token, version, notes, files }) {
     for (const file of files) {
       const data = await fsp.readFile(file)
       await api(token, 'POST', `${uploadBase}?name=${encodeURIComponent(path.basename(file))}`, data, {
-        'Content-Type': file.endsWith('.json') ? 'application/json' : 'application/zip'
+        'Content-Type': file.endsWith('.json') ? 'application/json' : file.endsWith('.zip') ? 'application/zip' : 'application/octet-stream'
       })
     }
     // 파일이 다 올라간 다음에 공개해야 업로드 도중 접속한 유저가 깨지지 않는다.
@@ -75,4 +78,4 @@ async function publishRelease ({ repo, token, version, notes, files }) {
   }
 }
 
-module.exports = { publishRelease, bundleUrl, bundleName, manifestUrl, releaseTag }
+module.exports = { publishRelease, assetUrl, releaseDownloadPrefix, manifestUrl, releaseTag }

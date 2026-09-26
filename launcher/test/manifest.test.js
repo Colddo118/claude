@@ -47,3 +47,20 @@ test('서버 자동 접속 인자', () => {
     { server: { ip: 'play.x.com', port: 25570 } })
   assert.deepEqual(serverArgs({ minecraft: '1.21.1' }), {})
 })
+
+test('작은 파일 묶기: 한도 안이면 한 묶음, 넘으면 폴더별로 쪼갬', () => {
+  const { groupFiles } = require('../../tools/lib/grouping')
+  const f = (p, size) => ({ path: p, size })
+  const files = [f('config/a.toml', 10), f('config/b.toml', 10), f('kubejs/assets/x.png', 30), f('kubejs/data/y.json', 30), f('options.txt', 5)]
+  assert.deepEqual(groupFiles(files, 1000).map(g => g.id), ['.'])
+  const split = groupFiles(files, 40)
+  assert.deepEqual(split.map(g => [g.id, g.files.map(x => x.path)]), [
+    ['config', ['config/a.toml', 'config/b.toml']],
+    ['kubejs/assets', ['kubejs/assets/x.png']],
+    ['kubejs/data', ['kubejs/data/y.json']],
+    ['./*', ['options.txt']]
+  ])
+  // 한 폴더에 파일이 많으면 순서대로 잘라 여러 묶음
+  const many = groupFiles([f('cfg/1', 30), f('cfg/2', 30), f('cfg/3', 30), f('z/1', 100)], 60)
+  assert.deepEqual(many.map(g => g.id), ['cfg/*', 'cfg/*#2', 'z'])
+})

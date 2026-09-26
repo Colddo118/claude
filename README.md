@@ -24,14 +24,14 @@
 ───────────                                ─────────────────────                  ────────
 커스포지 인스턴스 폴더                      pack-1.3.0 릴리스                       런처(.exe)
    │  node tools/build-manifest.js --publish   ├ manifest.json   ◀── 최신 버전 확인 ──  │
-   └─────────────── 자동 업로드 ──────────────▶ └ pack-1.3.0.zip (설정 등) ── 바뀐 게 있으면 ─▶ instance/
+   └─────────────── 바뀐 것만 업로드 ─────────▶ └ 폴더별 zip·큰 파일 (설정 등) ─ 바뀐 것만 ─▶ instance/
                                             커스포지 CDN (edge.forgecdn.net)          ▲
                                               모드 jar 들  ───────── 바뀐 모드만 ─────────┘
 ```
 
 - `manifest.json`: 모드팩 버전, MC/로더 버전, 패치노트 이력, 파일 목록(경로 + SHA-1 + 크기 + 받을 곳)
 - 런처는 로컬 파일과 매니페스트를 비교해서 필요한 파일만 받고, 받은 파일은 전부 해시로 검증함
-  (CDN 이나 zip 의 파일이 관리자가 빌드한 것과 조금이라도 다르면 설치하지 않음)
+  (CDN 이나 GitHub 에서 받은 파일이 관리자가 빌드한 것과 조금이라도 다르면 설치하지 않음)
 
 ### 유저 데이터 보존 규칙
 
@@ -73,9 +73,10 @@
 
 - **모드/리소스팩/셰이더**: 커스포지 앱이 설치한 파일은 인스턴스의 `minecraftinstance.json` 에 커스포지 CDN 주소가
   들어 있어서, 런처가 거기서 바로 받습니다. 관리자가 모드 파일을 올릴 필요가 없고, 모드 재배포 문제도 줄어듭니다.
-  (빌드할 때 각 주소가 살아 있는지 확인하고, 안 되는 파일은 자동으로 아래 묶음에 넣습니다.)
-- **설정/KubeJS/커스포지에 없는 모드 등 나머지**: `pack-<버전>.zip` 하나로 묶어서 manifest.json 과 함께
-  **GitHub Releases** 에 올립니다. 런처는 항상 최신 릴리스의 manifest.json 을 봅니다.
+  (빌드할 때 각 주소가 살아 있는지 확인하고, 안 되는 파일은 자동으로 아래처럼 GitHub 에 올립니다.)
+- **설정/KubeJS/커스포지에 없는 모드 등 나머지**: **GitHub Releases** 에 올립니다. 4MB 이상 파일은 파일째,
+  작은 파일은 폴더별 zip(약 16MB 단위)으로 묶습니다. 바뀌지 않은 파일·묶음은 이전 릴리스 것을 그대로 쓰므로
+  업데이트 때는 바뀐 부분만 올리고 유저도 그것만 받습니다. 런처는 항상 최신 릴리스의 manifest.json 을 봅니다.
 
 준비:
 1. GitHub 에 **공개(Public)** 저장소를 하나 만듭니다 (예: `내아이디/modpack`). "Add a README file" 체크 (빈 저장소면 릴리스가 안 만들어짐).
@@ -109,8 +110,10 @@
    ```
    - `--publish` 를 주면 GitHub 릴리스(`pack-1.3.0`) 생성 → 파일 첨부 → 공개까지 자동으로 합니다.
      파일이 다 올라간 뒤에 공개되므로 업로드 도중에 유저가 깨지지 않습니다.
-   - `--publish` 없이 돌리면 `pack-dist` 에 `pack-1.3.0.zip`, `manifest.json` 이 생깁니다.
-     GitHub 저장소 → Releases → "Draft a new release" → 태그 `pack-1.3.0` → 두 파일 첨부 → Publish 해도 됩니다.
+   - `--publish` 없이 돌리면 `pack-dist\release-1.3.0` 폴더에 올릴 파일이 모입니다.
+     GitHub 저장소 → Releases → "Draft a new release" → 태그 `pack-1.3.0` → 그 폴더 안 파일 전부 첨부 → Publish 해도 됩니다.
+   - 바뀌지 않은 파일은 이전 릴리스에 있는 걸 그대로 가리키므로 **새로 올리는 건 바뀐 부분뿐**입니다.
+     그래서 **예전 릴리스는 지우면 안 됩니다.**
    - MC 버전과 NeoForge 버전(예: 1.21.1 / 21.1.77)은 커스포지의 `minecraftinstance.json` 에서 자동으로 읽습니다.
      NeoForge 버전을 올리면 런처가 알아서 새 버전을 설치합니다.
    - `pack-dist` 폴더는 지우지 말고 계속 쓰세요 (이전 패치노트 이력을 여기서 이어 붙임).
@@ -124,7 +127,6 @@
 | `packName` | `My Modpack` | 런처 상단에 표시할 이름 |
 | `github` | 없음 | `"내아이디/modpack"` → GitHub Releases 에 올리는 방식 (추천) |
 | `useCurseForgeCdn` | `true` | `false` 면 모드도 직접 올림 |
-| `bundleUrl` | 없음 | GitHub 외 다른 곳에 zip 을 올릴 때 주소 틀. 예: `https://example.com/pack-{version}.zip` |
 | `include` | mods, config, defaultconfigs, kubejs, scripts, resourcepacks, shaderpacks, options.txt, servers.dat | 배포할 파일/폴더 (글롭 `*`, `**` 사용 가능) |
 | `exclude` | `**/*.disabled`, `**/*.bak`, 숨김 폴더 등 | 제외할 파일. 적은 항목은 기본값에 **더해짐**. 예: `["kubejs/dev"]` |
 | `once` | options.txt, servers.dat, iris/sodium/embeddium 그래픽 설정, `config/jei`, ftbchunks 클라이언트 설정 | 처음 설치 때만 넣는 개인 취향 파일. 적은 항목은 기본값에 **더해짐** |
@@ -178,7 +180,7 @@ tools/build-manifest.js    관리자용 매니페스트 생성기
   하는 것을 권장합니다.
 - **윈도우 SmartScreen**: 코드 서명을 하지 않은 exe 라서 처음 실행 시 "Windows 의 PC 보호" 경고가 뜹니다.
   "추가 정보 → 실행" 으로 넘어가면 됩니다. (없애려면 코드 서명 인증서 필요)
-- **배포 경로 검증 범위**: 커스포지 CDN + zip 묶음 + GitHub 릴리스 자동 게시 흐름은 로컬 가짜 서버로 테스트했습니다.
+- **배포 경로 검증 범위**: 커스포지 CDN + GitHub 릴리스(폴더별 묶음, 이전 릴리스 재사용, 자동 게시) 흐름은 로컬 가짜 서버로 테스트했습니다.
   실제 커스포지 CDN/GitHub 에는 개발 환경에서 접속할 수 없어서 돌려보지 못했습니다. 첫 배포 때 빌드 출력의
   "커스포지 CDN 에서 받음: N개" 숫자가 모드 개수와 비슷한지 확인하세요 (0 이면 CDN 주소를 못 읽은 것 → 알려주세요).
 - **모드 재배포**: 커스포지에 있는 모드는 커스포지 CDN 에서 받으므로 재배포 문제가 없습니다. 커스포지에 없는 모드와

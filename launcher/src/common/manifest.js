@@ -71,10 +71,10 @@ function isHttpUrl (u) {
   }
 }
 
-// 파일을 어디서 받는지: 개별 URL(커스포지 CDN 등) > 묶음 zip > objects/ 폴더
+// 파일을 어디서 받는지: 개별 URL(커스포지 CDN, GitHub 릴리스 파일) > 묶음 zip > objects/ 폴더
 function fileSource (manifest, f) {
   if (f.url) return 'url'
-  if (manifest.bundle) return 'bundle'
+  if (f.bundle) return 'bundle'
   return 'object'
 }
 
@@ -121,11 +121,17 @@ function validateManifest (m) {
     if (f.mode !== undefined && !FILE_MODES.includes(f.mode)) fail(`${f.path}: mode 는 ${FILE_MODES.join('/')} 중 하나`)
     if (f.url !== undefined && !isHttpUrl(f.url)) fail(`${f.path}: url 은 http(s) 주소여야 함`)
   }
-  if (m.bundle !== undefined) {
-    const b = m.bundle
-    if (!b || !isHttpUrl(b.url)) fail('bundle.url 은 http(s) 주소여야 함')
-    if (!/^[0-9a-f]{40}$/.test(b.sha1)) fail('bundle.sha1 형식 오류')
-    if (!Number.isInteger(b.size) || b.size < 0) fail('bundle.size 형식 오류')
+  const bundleIds = new Set()
+  for (const b of m.bundles || []) {
+    if (!b || typeof b.id !== 'string' || !b.id) fail('bundles[].id 누락')
+    if (bundleIds.has(b.id)) fail(`중복 묶음 id ${b.id}`)
+    bundleIds.add(b.id)
+    if (!isHttpUrl(b.url)) fail(`묶음 ${b.id}: url 은 http(s) 주소여야 함`)
+    if (!/^[0-9a-f]{40}$/.test(b.sha1)) fail(`묶음 ${b.id}: sha1 형식 오류`)
+    if (!Number.isInteger(b.size) || b.size < 0) fail(`묶음 ${b.id}: size 형식 오류`)
+  }
+  for (const f of m.files) {
+    if (f.bundle !== undefined && !bundleIds.has(f.bundle)) fail(`${f.path}: 없는 묶음 ${f.bundle}`)
   }
   for (const d of m.strictDirs || []) {
     if (!isSafeRelPath(d)) fail(`안전하지 않은 strictDirs 항목 ${JSON.stringify(d)}`)

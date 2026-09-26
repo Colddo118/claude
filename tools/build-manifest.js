@@ -18,6 +18,7 @@ const crypto = require('node:crypto')
 const { pipeline } = require('node:stream/promises')
 const { writeZip } = require('./lib/zip')
 const { readCurseForgeFiles, cdnUrlFor, checkUrl } = require('./lib/curseforge')
+const { groupFiles } = require('./lib/grouping')
 const github = require('./lib/github')
 const {
   FORMAT_VERSION,
@@ -139,6 +140,59 @@ async function mapLimit (items, limit, fn) {
   return out
 }
 
+const LARGE_FILE = 4 * 1024 * 1024 // 이보다 큰 파일은 릴리스에 파일째 올린다
+const BUNDLE_LIMIT = 16 * 1024 * 1024 // 작은 파일 묶음(zip) 하나의 목표 크기
+
+/**
+ * GitHub 모드: 직접 올릴 파일들을 릴리스 첨부 파일로 만든다.
+ * - 큰 파일은 f-<sha1>, 작은 파일은 폴더 단위 묶음 b-<sha1>.zip
+ * - 이전 버전 매니페스트에 같은 해시가 있으면 그 주소를 그대로 재사용 (다시 올리지도, 다시 받지도 않음)
+ */
+async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, selfHosted, bundles, newAssets, largeFile, bundleLimit }) {
+  const releaseDir = path.join(outDir, `release-${version}`)
+  await fsp.rm(releaseDir, { recursive: true, force: true })
+  await fsp.mkdir(releaseDir, { recursive: true })
+
+  const known = new Map()
+  const ownPrefix = github.releaseDownloadPrefix(repo)
+  for (const f of (previous && previous.files) || []) {
+    if (f.url && f.url.startsWith(ownPrefix)) known.set(`f:${f.sha1}`, f.url)
+  }
+  for (const b of (previous && previous.bundles) || []) known.set(`b:${b.sha1}`, b.url)
+
+  let reused = 0
+  const addAsset = async (key, name, produce) => {
+    if (known.has(key)) {
+      reused++
+      return known.get(key)
+    }
+    const dest = path.join(releaseDir, name)
+    if (!newAssets.includes(dest)) {
+      await produce(dest)
+      newAssets.push(dest)
+    }
+    const url = github.assetUrl(repo, version, name)
+    known.set(key, url)
+    return url
+  }
+
+  for (const f of selfHosted.filter(f => f.size >= largeFile)) {
+    f.url = await addAsset(`f:${f.sha1}`, `f-${f.sha1}`, dest => fsp.copyFile(path.join(sourceDir, ...f.path.split('/')), dest))
+  }
+
+  const tmp = path.join(releaseDir, '.building.zip')
+  for (const g of groupFiles(selfHosted.filter(f => f.size < largeFile), bundleLimit)) {
+    await writeZip(tmp, g.files.map(f => ({ name: f.path, file: path.join(sourceDir, ...f.path.split('/')) })))
+    const sha1 = await sha1File(tmp)
+    const size = (await fsp.stat(tmp)).size
+    const url = await addAsset(`b:${sha1}`, `b-${sha1}.zip`, dest => fsp.rename(tmp, dest))
+    await fsp.rm(tmp, { force: true })
+    bundles.push({ id: g.id, url, sha1, size })
+    for (const f of g.files) f.bundle = g.id
+  }
+  return { releaseDir, reused }
+}
+
 async function build ({ source, out, version, notes, config: configPath, force, github: githubArg, ...flags }) {
   const sourceDir = path.resolve(source)
   const outDir = path.resolve(out)
@@ -147,9 +201,7 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   const merged = key => [...DEFAULT_CONFIG[key], ...(userConfig[key] || [])]
   const config = { ...DEFAULT_CONFIG, ...userConfig, exclude: merged('exclude'), once: merged('once') }
   const repo = githubArg || config.github
-  // bundleUrl: GitHub 이외의 곳에 zip 을 올릴 때 쓰는 주소 틀 (예: https://example.com/pack-{version}.zip)
-  const bundleUrl = repo ? github.bundleUrl(repo, version) : config.bundleUrl && config.bundleUrl.replace(/\{version\}/g, version)
-  const mode = bundleUrl ? 'bundle' : 'objects'
+  const mode = repo ? 'github' : 'objects'
 
   const detected = await detectFromCurseForge(sourceDir)
   const minecraft = config.minecraft || detected.minecraft
@@ -195,13 +247,18 @@ async function build ({ source, out, version, notes, config: configPath, force, 
 
   await fsp.mkdir(outDir, { recursive: true })
   const selfHosted = files.filter(f => !f.url)
-  let bundle
-  let bundleFile
+  const bundles = []
+  const newAssets = []
+  let releaseDir
+  let reused = 0
   let newObjects = 0
-  if (mode === 'bundle') {
-    bundleFile = path.join(outDir, repo ? github.bundleName(version) : `pack-${version}.zip`)
-    await writeZip(bundleFile, selfHosted.map(f => ({ name: f.path, file: path.join(sourceDir, ...f.path.split('/')) })))
-    bundle = { url: bundleUrl, sha1: await sha1File(bundleFile), size: (await fsp.stat(bundleFile)).size }
+  if (mode === 'github') {
+    const MB = 1024 * 1024
+    ;({ releaseDir, reused } = await buildGithubAssets({
+      repo, version, sourceDir, outDir, previous, selfHosted, bundles, newAssets,
+      largeFile: config.largeFileMB ? config.largeFileMB * MB : LARGE_FILE,
+      bundleLimit: config.bundleSizeMB ? config.bundleSizeMB * MB : BUNDLE_LIMIT
+    }))
   } else {
     for (const f of selfHosted) {
       const objFile = path.join(outDir, ...objectPath(f.sha1).split('/'))
@@ -230,13 +287,18 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     ...(config.server ? { server: config.server } : {}),
     ...(config.memory ? { memory: config.memory } : {}),
     strictDirs: config.strictDirs,
-    ...(bundle ? { bundle } : {}),
+    ...(bundles.length ? { bundles } : {}),
     changelog,
     files
   }
   validateManifest(manifest)
   const manifestFile = path.join(outDir, 'manifest.json')
   await fsp.writeFile(manifestFile, JSON.stringify(manifest, null, 2))
+  if (releaseDir) {
+    // 릴리스에 올릴 파일은 releaseDir 한 곳에 모아 둔다 (수동 업로드 시 폴더 안 파일을 전부 첨부하면 됨)
+    await fsp.copyFile(manifestFile, path.join(releaseDir, 'manifest.json'))
+    newAssets.push(path.join(releaseDir, 'manifest.json'))
+  }
 
   // 어디가 큰지 보여주기 위한 요약: 폴더별 합계, 가장 큰 파일
   const byDir = {}
@@ -254,7 +316,9 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     largest,
     repo,
     newObjects,
-    bundleFile,
+    newAssets,
+    releaseDir,
+    reused,
     manifestFile,
     cdnCount: files.length - selfHosted.length,
     cdnFailed,
@@ -290,23 +354,22 @@ async function main () {
     console.log(`  → ${path.resolve(args.out)} 폴더를 웹 호스팅에 업로드하세요 (새 파일 ${r.newObjects}개, manifest.json 은 마지막에).`)
     return
   }
-  if (!r.repo) {
-    console.log(`  → ${path.basename(r.bundleFile)} 를 ${manifest.bundle.url} 에, 그다음 manifest.json 을 올리세요.`)
-    return
-  }
+  const uploadBytes = (await Promise.all(r.newAssets.map(f => fsp.stat(f).then(s => s.size)))).reduce((a, b) => a + b, 0)
+  console.log(`  GitHub 릴리스에 새로 올릴 파일: ${r.newAssets.length}개 (${mb(uploadBytes)}), 이전 릴리스 재사용: ${r.reused}개`)
   if (!args.publish) {
     console.log(`  → GitHub 에서 ${r.repo} 저장소에 태그 ${github.releaseTag(manifest.version)} 로 새 릴리스를 만들고`)
-    console.log(`    ${path.basename(r.bundleFile)} 와 manifest.json 두 파일을 첨부하세요. (--publish 를 주면 자동)`)
+    console.log(`    ${r.releaseDir} 폴더 안의 파일을 전부 첨부하세요. (--publish 를 주면 자동)`)
   } else {
     await github.publishRelease({
       repo: r.repo,
       token: process.env.GITHUB_TOKEN,
       version: manifest.version,
       notes,
-      files: [r.bundleFile, r.manifestFile]
+      files: r.newAssets
     })
     console.log(`  ✔ GitHub 릴리스 ${github.releaseTag(manifest.version)} 게시 완료. 이제 런처에 업데이트가 뜹니다.`)
   }
+  console.log('  ⚠ 이전 릴리스는 지우지 마세요. 바뀌지 않은 파일은 예전 릴리스에서 받습니다.')
   console.log(`  런처 설정(manifestUrl): ${github.manifestUrl(r.repo)}`)
 }
 
