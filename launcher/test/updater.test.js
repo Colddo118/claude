@@ -66,6 +66,8 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   write(src, 'mods/jei.jar', 'jei-v1')
   write(src, 'mods/create.jar', 'create-v1')
   write(src, 'mods/old-mod.jar', 'old')
+  write(src, 'kubejs/assets/old/deep/tex.png', 'old texture')
+  write(src, 'kubejs/config/gear.generated.json', '{"v":1}')
   write(src, 'mods/disabled.jar.disabled', 'nope')
   write(src, 'config/create-common.toml', 'speed=1')
   write(src, 'options.txt', 'renderDistance:8')
@@ -78,13 +80,14 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   assert.equal(r1.manifest.minecraft, '1.20.1')
   assert.deepEqual(r1.manifest.loader, { type: 'forge', version: '47.2.0' })
   assert.deepEqual(r1.manifest.files.map(f => f.path), [
-    'config/create-common.toml', 'mods/create.jar', 'mods/jei.jar', 'mods/old-mod.jar', 'options.txt'
+    'config/create-common.toml', 'kubejs/assets/old/deep/tex.png', 'kubejs/config/gear.generated.json',
+    'mods/create.jar', 'mods/jei.jar', 'mods/old-mod.jar', 'options.txt'
   ])
   assert.equal(r1.manifest.files.find(f => f.path === 'options.txt').mode, 'once')
 
   // 유저 첫 설치
   const p1 = await sync(instance, stateFile)
-  assert.equal(p1.downloads.length, 5)
+  assert.equal(p1.downloads.length, 7)
   assert.equal(read(instance, 'mods/jei.jar'), 'jei-v1')
   assert.equal((await updater.loadState(stateFile)).installedVersion, '1.0.0')
 
@@ -102,20 +105,21 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   // 관리자: v1.1.0 — jei 업데이트, old-mod 삭제, 새 모드 추가, 설정 변경, 기본 옵션 변경
   write(src, 'mods/jei.jar', 'jei-v2')
   fs.rmSync(path.join(src, 'mods', 'old-mod.jar'))
+  fs.rmSync(path.join(src, 'kubejs', 'assets'), { recursive: true })
   write(src, 'mods/new-mod.jar', 'new')
   write(src, 'config/create-common.toml', 'speed=2')
   write(src, 'options.txt', 'renderDistance:6')
   await assert.rejects(build({ source: src, out, version: '1.0.0' }), /이미 1.0.0/)
   const r2 = await build({ source: src, out, version: '1.1.0', notes: '- JEI 업데이트\n- 새 모드 추가' })
   assert.equal(r2.sizeByDir[0][0], 'mods/')
-  assert.equal(r2.largest.length, 5)
+  assert.equal(r2.largest.length, 6)
   assert.deepEqual(r2.manifest.changelog.map(c => c.version), ['1.1.0', '1.0.0'])
 
   const manifest = await updater.fetchManifest(baseUrl)
   const plan = await updater.planUpdate({ manifest, instanceDir: instance, state: await updater.loadState(stateFile) })
   assert.equal(plan.versionChanged, true)
   assert.deepEqual(plan.downloads.map(f => f.path).sort(), ['config/create-common.toml', 'mods/jei.jar', 'mods/new-mod.jar'])
-  assert.deepEqual(plan.removals, ['mods/old-mod.jar'])
+  assert.deepEqual(plan.removals.sort(), ['kubejs/assets/old/deep/tex.png', 'mods/old-mod.jar'])
   assert.deepEqual(plan.strays, ['mods/my-own-mod.jar'])
 
   await sync(instance, stateFile)
@@ -123,6 +127,8 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   assert.equal(read(instance, 'mods/new-mod.jar'), 'new')
   assert.equal(read(instance, 'config/create-common.toml'), 'speed=2')
   assert.equal(exists(instance, 'mods/old-mod.jar'), false)
+  assert.equal(exists(instance, 'kubejs/assets'), false) // 빈 폴더까지 정리됨
+  assert.equal(exists(instance, 'kubejs/config/gear.generated.json'), true)
   assert.equal(exists(instance, 'mods/my-own-mod.jar'), false)
   // 사용자 데이터는 그대로
   assert.equal(read(instance, 'options.txt'), 'renderDistance:16')
@@ -148,6 +154,10 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   assert.equal(quiet.needsUpdate, false)
   assert.equal(read(instance, 'config/create-common.toml'), 'speed=2\n# rewritten by mod')
 
+  // KubeJS 스크립트가 게임 중에 다시 만드는 파일도 마찬가지
+  write(instance, 'kubejs/config/gear.generated.json', '{"v":1,"regenerated":true}')
+  assert.equal((await sync(instance, stateFile)).needsUpdate, false)
+
   // 관리자가 서버 쪽 config 를 바꾸면 그때는 덮어쓴다
   write(src, 'config/create-common.toml', 'speed=3')
   await build({ source: src, out, version: '1.2.0', notes: '- 속도 조정' })
@@ -161,7 +171,8 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   const repairState = { ...st, files: Object.fromEntries(Object.keys(st.files).map(k => [k, {}])) }
   const m3 = await updater.fetchManifest(baseUrl)
   const repairPlan = await updater.planUpdate({ manifest: m3, instanceDir: instance, state: repairState })
-  assert.deepEqual(repairPlan.downloads.map(f => f.path), ['config/create-common.toml'])
+  // (게임이 다시 만든 kubejs 파일도 복구 모드에서는 서버 내용으로 돌아감)
+  assert.deepEqual(repairPlan.downloads.map(f => f.path), ['config/create-common.toml', 'kubejs/config/gear.generated.json'])
 })
 
 test('서버 파일이 손상되면 체크섬 오류로 거부한다', async () => {
@@ -218,7 +229,7 @@ test('pack.config.json 의 exclude 는 기본 제외 목록에 더해진다', as
     ['config/create-common.toml', 'update'],
     ['config/iris.properties', 'once'], // 개인 취향 설정은 처음 한 번만
     ['config/jei/jei-client.ini', 'once'],
-    ['kubejs/startup_scripts/main.js', undefined],
+    ['kubejs/startup_scripts/main.js', 'update'],
     ['mods/a.jar', undefined]
   ])
 })

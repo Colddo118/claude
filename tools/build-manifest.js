@@ -43,8 +43,9 @@ const DEFAULT_CONFIG = {
     'config/sodium-options.json', 'config/embeddium-options.json',
     'config/jei', 'config/ftbchunks-client.snbt'
   ],
-  // 모드가 실행 중에 스스로 고쳐 쓰는 설정 파일들: 관리자가 바꿨을 때만 덮어쓴다
-  update: ['config'],
+  // 게임(모드, KubeJS 스크립트)이 실행 중에 스스로 고쳐 쓸 수 있는 파일들: 관리자가 바꿨을 때만 덮어쓴다.
+  // 여기 없는 mods / resourcepacks / shaderpacks 는 항상 서버와 똑같이 맞춘다.
+  update: ['config', 'defaultconfigs', 'kubejs', 'scripts'],
   // 이 폴더 안에서 매니페스트에 없는 파일은 백업 폴더로 치운다 (서버와 모드 불일치 방지)
   strictDirs: ['mods'],
   changelogLimit: 30

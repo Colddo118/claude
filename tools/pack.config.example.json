@@ -28,8 +28,5 @@
   ],
   "strictDirs": [
     "mods"
-  ],
-  "update": [
-    "config"
   ]
 }

@@ -197,6 +197,21 @@ async function downloadVerified ({ url, dest, sha1, size, signal, onBytes, retri
   throw new Error(`${path.basename(dest)} 다운로드 실패: ${lastError.message}`)
 }
 
+// 파일을 지우고 나서 비게 된 상위 폴더들을 정리한다 (인스턴스 폴더 자체는 남김).
+async function pruneEmptyDirs (instanceDir, relPaths) {
+  const dirs = new Set()
+  for (const p of relPaths) {
+    const parts = p.split('/')
+    for (let i = parts.length - 1; i > 0; i--) dirs.add(parts.slice(0, i).join('/'))
+  }
+  // 깊은 폴더부터 지워야 부모가 비게 된다
+  for (const d of [...dirs].sort((a, b) => b.split('/').length - a.split('/').length)) {
+    try {
+      await fsp.rmdir(toLocal(instanceDir, d)) // 비어 있지 않으면 실패 → 그대로 둠
+    } catch {}
+  }
+}
+
 function openZip (file) {
   const yauzl = require('yauzl')
   return new Promise((resolve, reject) => {
@@ -288,6 +303,7 @@ async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, sta
   for (const p of plan.removals) {
     await fsp.rm(toLocal(instanceDir, p), { force: true })
   }
+  await pruneEmptyDirs(instanceDir, [...plan.removals, ...plan.strays])
 
   let doneBytes = 0
   let doneFiles = 0
