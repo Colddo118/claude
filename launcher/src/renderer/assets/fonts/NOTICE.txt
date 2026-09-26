@@ -1,0 +1,9 @@
+pixel-regular.woff2 / pixel-bold.woff2
+
+갈무리(Galmuri) 글꼴의 서브셋입니다. 한글 음절·라틴 문자·자주 쓰는 기호만 남기고 WOFF2 로 압축했습니다.
+  pixel-regular.woff2 ← Galmuri9       Copyright (c) 2019-2024 Lee Minseo (quiple@quiple.dev)
+  pixel-bold.woff2    ← Galmuri11 Bold Copyright (c) 2019-2023 Minseo Lee
+
+원본: https://github.com/quiple/galmuri
+라이선스: SIL Open Font License 1.1 (https://openfontlicense.org)
+수정본이므로 글꼴 이름을 "KubejsRPG Pixel" 로 바꿨습니다.

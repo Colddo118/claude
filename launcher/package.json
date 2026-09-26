@@ -28,6 +28,8 @@
       "launcher.config.json",
       "package.json"
     ],
+    "electronLanguages": ["ko", "en-US"],
+    "compression": "maximum",
     "win": {
       "target": "nsis"
     },
