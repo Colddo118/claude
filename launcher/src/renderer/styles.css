@@ -79,7 +79,7 @@ body {
   grid-template-columns: minmax(0, 54%) 1fr;
   grid-template-rows: auto minmax(0, 1fr) auto; /* 창이 작아도 패치노트가 창 밖으로 안 나가게 */
   column-gap: calc(var(--u) * 10);
-  padding: calc(var(--u) * 5) calc(var(--u) * 8) calc(var(--u) * 6);
+  padding: calc(var(--u) * 6) calc(var(--u) * 12) calc(var(--u) * 11);
   color: var(--text);
   font: 20px/1.35 var(--body);
   user-select: none;
@@ -186,14 +186,30 @@ button.tab:hover { color: var(--gold); box-shadow: inset 0 calc(var(--u) * -1) 0
 .topbar {
   grid-column: 1 / -1;
   /* 윗줄 = 창 제목줄: 창 위쪽 끝까지 덮어서 어디를 잡아도 창이 끌리게 */
-  margin: calc(var(--u) * -5) calc(var(--u) * -8) 0;
-  padding: calc(var(--u) * 5) calc(var(--u) * 50) 0 calc(var(--u) * 8);
+  margin: calc(var(--u) * -6) calc(var(--u) * -12) 0;
+  padding: calc(var(--u) * 6) calc(var(--u) * 58) 0 calc(var(--u) * 12);
   -webkit-app-region: drag;
 }
 .topbar button, .winctl, dialog { -webkit-app-region: no-drag; }
 
 /* 창 버튼 (최소화 · 최대화 · 닫기) — 5x5 픽셀 아이콘, 1픽셀 = --u */
-.winctl { position: fixed; top: var(--u); right: var(--u); display: flex; z-index: 1; }
+.winctl { position: fixed; top: calc(var(--u) * 3); right: calc(var(--u) * 12); display: flex; z-index: 3; }
+
+/*
+ * 장식 테두리 = 가는 금선 + 네 모서리 매듭 (assets/frame-knot.png, 9-slice · 1픽셀 = --u)
+ * 창 전체(.window-frame)와 패치노트 칸 · 설정 창에 겹쳐 그린다. 클릭은 통과.
+ */
+.window-frame, .notes::after, dialog::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  border: calc(var(--u) * 9) solid transparent;
+  border-image: url("assets/frame-knot.png") 9 / calc(var(--u) * 9) stretch;
+  image-rendering: pixelated;
+  z-index: 2;
+}
+.window-frame { position: fixed; inset: calc(var(--u) * 2); }
+.notes::after, dialog::after { inset: 0; }
 button.win {
   width: calc(var(--u) * 14);
   height: calc(var(--u) * 10);
@@ -283,6 +299,7 @@ button.win.close::before {
 
 /* 패치노트 — 어두운 반투명 칸 */
 .notes {
+  position: relative;
   min-height: 0;
   flex: 1; /* 패치노트 = 왼쪽 아래 끝까지 */
   display: flex;
@@ -295,7 +312,7 @@ button.win.close::before {
   align-items: center;
   justify-content: space-between;
   min-height: calc(var(--u) * 13);
-  padding: 0 calc(var(--u) * 4);
+  padding: 0 calc(var(--u) * 10);
   background: var(--head-bg);
 }
 .notes-head h2 { font-size: 20px; color: var(--gold); }
@@ -309,7 +326,8 @@ button.win.close::before {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 calc(var(--u) * 4) calc(var(--u) * 2);
+  padding: 0 calc(var(--u) * 10) calc(var(--u) * 8);
+  margin: 0 calc(var(--u) * 3) calc(var(--u) * 3) 0; /* 스크롤 막대 · 글자가 테두리 선과 겹치지 않게 */
   user-select: text;
 }
 .changelog::-webkit-scrollbar { width: calc(var(--u) * 2); }
@@ -344,8 +362,8 @@ dialog {
   color: var(--text);
   font: 20px/1.35 var(--body);
   border: 0;
-  width: calc(var(--u) * 190);
-  padding: calc(var(--u) * 4) calc(var(--u) * 6) calc(var(--u) * 5);
+  width: calc(var(--u) * 200);
+  padding: calc(var(--u) * 9) calc(var(--u) * 11) calc(var(--u) * 10);
 }
 dialog::backdrop { background: var(--veil); }
 .settings-form { display: flex; flex-direction: column; gap: calc(var(--u) * 4); }
