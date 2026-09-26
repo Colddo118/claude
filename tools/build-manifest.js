@@ -1,20 +1,24 @@
 #!/usr/bin/env node
 'use strict'
 
-// 관리자용: 커스포지 인스턴스 폴더(또는 아무 모드팩 폴더)를 읽어서
-// 런처가 받아갈 manifest.json + objects/ 를 만든다.
+// 관리자용: 커스포지 인스턴스 폴더를 읽어서 런처가 받아갈 manifest.json 을 만든다.
+//
+// 모드/리소스팩은 커스포지 CDN 주소를 그대로 쓰고(따로 올릴 필요 없음), 나머지 파일은
+//  - GitHub 모드 (pack.config.json 에 "github": "내아이디/저장소"): pack-<버전>.zip 하나로 묶어
+//    GitHub Releases 에 올린다. --publish 를 주면 업로드까지 자동.
+//  - objects 모드 (기본): objects/ 폴더에 해시 이름으로 복사 → 웹 호스팅에 업로드.
 //
 //   node tools/build-manifest.js --source "C:/Users/me/curseforge/minecraft/Instances/MyPack" \
-//        --out ./pack-dist --version 1.3.0 --notes-file ./notes.md
-//
-// 결과 폴더(--out)를 통째로 웹 호스팅(Cloudflare R2, 자체 웹서버 등)에 올리면 된다.
-// objects/ 는 내용 해시로 이름이 붙으므로 바뀐 파일만 새로 올라간다.
+//        --out ./pack-dist --version 1.3.0 --notes-file ./notes.md --publish
 
 const fs = require('node:fs')
 const fsp = fs.promises
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { pipeline } = require('node:stream/promises')
+const { writeZip } = require('./lib/zip')
+const { readCurseForgeFiles, cdnUrlFor, checkUrl } = require('./lib/curseforge')
+const github = require('./lib/github')
 const {
   FORMAT_VERSION,
   matchesAny,
@@ -43,7 +47,7 @@ function parseArgs (argv) {
     const a = argv[i]
     if (!a.startsWith('--')) throw new Error(`알 수 없는 인자: ${a}`)
     const key = a.slice(2)
-    if (key === 'force' || key === 'help') {
+    if (['force', 'help', 'publish', 'no-cdn', 'no-url-check'].includes(key)) {
       args[key] = true
     } else {
       if (argv[i + 1] === undefined) throw new Error(`${a} 에 값이 필요합니다`)
@@ -55,13 +59,16 @@ function parseArgs (argv) {
 
 const USAGE = `사용법:
   node tools/build-manifest.js --source <모드팩 폴더> --out <출력 폴더> --version <버전>
-       [--notes "패치노트" | --notes-file <파일>] [--config <pack.config.json>] [--force]
+       [--notes "패치노트" | --notes-file <파일>] [--config <pack.config.json>] [--publish] [--force]
 
-  --source      커스포지 인스턴스 폴더 (mods, config 등이 있는 곳)
-  --out         결과물 폴더. 기존 manifest.json 이 있으면 패치노트 이력을 이어 붙인다
-  --version     새 모드팩 버전 (예: 1.3.0)
-  --config      설정 파일. 생략하면 <source>/pack.config.json 을 찾는다
-  --force       같은 버전으로 다시 빌드 허용`
+  --source        커스포지 인스턴스 폴더 (mods, config 등이 있는 곳)
+  --out           결과물 폴더. 기존 manifest.json 이 있으면 패치노트 이력을 이어 붙인다
+  --version       새 모드팩 버전 (예: 1.3.0)
+  --config        설정 파일. 생략하면 <source>/pack.config.json 을 찾는다
+  --publish       GitHub 모드일 때 릴리스까지 자동으로 올린다 (GITHUB_TOKEN 환경변수 필요)
+  --no-cdn        커스포지 CDN 을 쓰지 않고 모든 파일을 직접 올린다
+  --no-url-check  CDN 주소 확인(HEAD 요청)을 건너뛴다
+  --force         같은 버전으로 다시 빌드 허용`
 
 // 커스포지 인스턴스의 minecraftinstance.json 에서 MC/로더 버전을 읽는다.
 async function detectFromCurseForge (sourceDir) {
@@ -110,11 +117,27 @@ async function readJsonIfExists (file) {
   }
 }
 
-async function build ({ source, out, version, notes, config: configPath, force }) {
+async function mapLimit (items, limit, fn) {
+  const out = new Array(items.length)
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await fn(items[i], i)
+    }
+  }))
+  return out
+}
+
+async function build ({ source, out, version, notes, config: configPath, force, github: githubArg, ...flags }) {
   const sourceDir = path.resolve(source)
   const outDir = path.resolve(out)
   const userConfig = await readJsonIfExists(configPath ? path.resolve(configPath) : path.join(sourceDir, 'pack.config.json')) || {}
   const config = { ...DEFAULT_CONFIG, ...userConfig }
+  const repo = githubArg || config.github
+  // bundleUrl: GitHub 이외의 곳에 zip 을 올릴 때 쓰는 주소 틀 (예: https://example.com/pack-{version}.zip)
+  const bundleUrl = repo ? github.bundleUrl(repo, version) : config.bundleUrl && config.bundleUrl.replace(/\{version\}/g, version)
+  const mode = bundleUrl ? 'bundle' : 'objects'
 
   const detected = await detectFromCurseForge(sourceDir)
   const minecraft = config.minecraft || detected.minecraft
@@ -131,23 +154,49 @@ async function build ({ source, out, version, notes, config: configPath, force }
   const candidates = (await walk(sourceDir))
     .filter(p => matchesAny(p, config.include) && !matchesAny(p, config.exclude))
     .sort()
+  const cdnMap = flags['no-cdn'] || config.useCurseForgeCdn === false ? new Map() : await readCurseForgeFiles(sourceDir)
 
   const files = []
-  let newObjects = 0
   for (const rel of candidates) {
     if (!isSafeRelPath(rel)) throw new Error(`지원하지 않는 파일 경로: ${rel}`)
     const abs = path.join(sourceDir, ...rel.split('/'))
-    const sha1 = await sha1File(abs)
-    const { size } = await fsp.stat(abs)
-    const entry = { path: rel, sha1, size }
+    const entry = { path: rel, sha1: await sha1File(abs), size: (await fsp.stat(abs)).size }
     if (matchesAny(rel, config.once)) entry.mode = 'once'
+    const url = cdnUrlFor(cdnMap, rel)
+    if (url) entry.url = url
     files.push(entry)
+  }
 
-    const objFile = path.join(outDir, ...objectPath(sha1).split('/'))
-    if (!fs.existsSync(objFile)) {
-      await fsp.mkdir(path.dirname(objFile), { recursive: true })
-      await fsp.copyFile(abs, objFile)
-      newObjects++
+  // CDN 주소가 실제로 살아 있는지 확인하고, 안 되는 파일은 직접 올리는 쪽으로 돌린다.
+  const cdnFailed = []
+  if (!flags['no-url-check']) {
+    const withUrl = files.filter(f => f.url)
+    const ok = await mapLimit(withUrl, 8, f => checkUrl(f.url, f.size))
+    withUrl.forEach((f, i) => {
+      if (!ok[i]) {
+        cdnFailed.push(f.path)
+        delete f.url
+      }
+    })
+  }
+
+  await fsp.mkdir(outDir, { recursive: true })
+  const selfHosted = files.filter(f => !f.url)
+  let bundle
+  let bundleFile
+  let newObjects = 0
+  if (mode === 'bundle') {
+    bundleFile = path.join(outDir, repo ? github.bundleName(version) : `pack-${version}.zip`)
+    await writeZip(bundleFile, selfHosted.map(f => ({ name: f.path, file: path.join(sourceDir, ...f.path.split('/')) })))
+    bundle = { url: bundleUrl, sha1: await sha1File(bundleFile), size: (await fsp.stat(bundleFile)).size }
+  } else {
+    for (const f of selfHosted) {
+      const objFile = path.join(outDir, ...objectPath(f.sha1).split('/'))
+      if (!fs.existsSync(objFile)) {
+        await fsp.mkdir(path.dirname(objFile), { recursive: true })
+        await fsp.copyFile(path.join(sourceDir, ...f.path.split('/')), objFile)
+        newObjects++
+      }
     }
   }
 
@@ -168,19 +217,29 @@ async function build ({ source, out, version, notes, config: configPath, force }
     ...(config.server ? { server: config.server } : {}),
     ...(config.memory ? { memory: config.memory } : {}),
     strictDirs: config.strictDirs,
+    ...(bundle ? { bundle } : {}),
     changelog,
     files
   }
   validateManifest(manifest)
+  const manifestFile = path.join(outDir, 'manifest.json')
+  await fsp.writeFile(manifestFile, JSON.stringify(manifest, null, 2))
 
-  await fsp.mkdir(outDir, { recursive: true })
-  await fsp.writeFile(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
   return {
     manifest,
+    mode,
+    repo,
     newObjects,
+    bundleFile,
+    manifestFile,
+    cdnCount: files.length - selfHosted.length,
+    cdnFailed,
+    selfHostedBytes: selfHosted.reduce((n, f) => n + f.size, 0),
     totalBytes: files.reduce((n, f) => n + f.size, 0)
   }
 }
+
+const mb = n => `${(n / 1024 / 1024).toFixed(1)} MB`
 
 async function main () {
   const args = parseArgs(process.argv.slice(2))
@@ -189,10 +248,38 @@ async function main () {
     process.exit(args.help ? 0 : 1)
   }
   const notes = args['notes-file'] ? await fsp.readFile(args['notes-file'], 'utf8') : args.notes
-  const { manifest, newObjects, totalBytes } = await build({ ...args, notes })
+  const r = await build({ ...args, notes })
+  const { manifest } = r
   console.log(`✔ ${manifest.packName} v${manifest.version} (MC ${manifest.minecraft}, ${manifest.loader.type} ${manifest.loader.version || ''})`)
-  console.log(`  파일 ${manifest.files.length}개, 총 ${(totalBytes / 1024 / 1024).toFixed(1)} MB, 새로 올릴 파일 ${newObjects}개`)
-  console.log(`  → ${path.resolve(args.out)} 폴더를 웹 호스팅에 업로드하세요.`)
+  console.log(`  파일 ${manifest.files.length}개 (총 ${mb(r.totalBytes)})`)
+  console.log(`  - 커스포지 CDN 에서 받음: ${r.cdnCount}개`)
+  console.log(`  - 직접 올릴 파일: ${manifest.files.length - r.cdnCount}개 (${mb(r.selfHostedBytes)})`)
+  if (r.cdnFailed.length) {
+    console.log(`  ! CDN 주소 확인 실패로 직접 올리는 파일 ${r.cdnFailed.length}개: ${r.cdnFailed.slice(0, 5).join(', ')}${r.cdnFailed.length > 5 ? ' ...' : ''}`)
+  }
+
+  if (r.mode === 'objects') {
+    console.log(`  → ${path.resolve(args.out)} 폴더를 웹 호스팅에 업로드하세요 (새 파일 ${r.newObjects}개, manifest.json 은 마지막에).`)
+    return
+  }
+  if (!r.repo) {
+    console.log(`  → ${path.basename(r.bundleFile)} 를 ${manifest.bundle.url} 에, 그다음 manifest.json 을 올리세요.`)
+    return
+  }
+  if (!args.publish) {
+    console.log(`  → GitHub 에서 ${r.repo} 저장소에 태그 ${github.releaseTag(manifest.version)} 로 새 릴리스를 만들고`)
+    console.log(`    ${path.basename(r.bundleFile)} 와 manifest.json 두 파일을 첨부하세요. (--publish 를 주면 자동)`)
+  } else {
+    await github.publishRelease({
+      repo: r.repo,
+      token: process.env.GITHUB_TOKEN,
+      version: manifest.version,
+      notes,
+      files: [r.bundleFile, r.manifestFile]
+    })
+    console.log(`  ✔ GitHub 릴리스 ${github.releaseTag(manifest.version)} 게시 완료. 이제 런처에 업데이트가 뜹니다.`)
+  }
+  console.log(`  런처 설정(manifestUrl): ${github.manifestUrl(r.repo)}`)
 }
 
 if (require.main === module) {

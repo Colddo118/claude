@@ -60,6 +60,21 @@ function isSafeRelPath (p) {
   return p.split('/').every(seg => seg !== '' && seg !== '.' && seg !== '..')
 }
 
+function isHttpUrl (u) {
+  try {
+    return ['http:', 'https:'].includes(new URL(u).protocol)
+  } catch {
+    return false
+  }
+}
+
+// 파일을 어디서 받는지: 개별 URL(커스포지 CDN 등) > 묶음 zip > objects/ 폴더
+function fileSource (manifest, f) {
+  if (f.url) return 'url'
+  if (manifest.bundle) return 'bundle'
+  return 'object'
+}
+
 function objectPath (sha1) {
   return `objects/${sha1.slice(0, 2)}/${sha1}`
 }
@@ -101,6 +116,13 @@ function validateManifest (m) {
     if (!/^[0-9a-f]{40}$/.test(f.sha1)) fail(`${f.path}: sha1 형식 오류`)
     if (!Number.isInteger(f.size) || f.size < 0) fail(`${f.path}: size 형식 오류`)
     if (f.mode !== undefined && !FILE_MODES.includes(f.mode)) fail(`${f.path}: mode 는 ${FILE_MODES.join('/')} 중 하나`)
+    if (f.url !== undefined && !isHttpUrl(f.url)) fail(`${f.path}: url 은 http(s) 주소여야 함`)
+  }
+  if (m.bundle !== undefined) {
+    const b = m.bundle
+    if (!b || !isHttpUrl(b.url)) fail('bundle.url 은 http(s) 주소여야 함')
+    if (!/^[0-9a-f]{40}$/.test(b.sha1)) fail('bundle.sha1 형식 오류')
+    if (!Number.isInteger(b.size) || b.size < 0) fail('bundle.size 형식 오류')
   }
   for (const d of m.strictDirs || []) {
     if (!isSafeRelPath(d)) fail(`안전하지 않은 strictDirs 항목 ${JSON.stringify(d)}`)
@@ -117,6 +139,8 @@ module.exports = {
   matchesAny,
   isSafeRelPath,
   objectPath,
+  fileSource,
+  isHttpUrl,
   compareVersions,
   validateManifest
 }

@@ -10,7 +10,7 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const { Readable, Transform } = require('node:stream')
 const { pipeline } = require('node:stream/promises')
-const { validateManifest, objectPath } = require('../common/manifest')
+const { validateManifest, objectPath, fileSource } = require('../common/manifest')
 
 const STATE_VERSION = 1
 
@@ -129,12 +129,18 @@ async function planUpdate ({ manifest, instanceDir, state, onProgress }) {
     }
   }
 
+  // 묶음(zip)에서 꺼낼 파일이 하나라도 있으면 zip 전체를 한 번 받는다.
+  const needsBundle = downloads.some(f => fileSource(manifest, f) === 'bundle')
+  const downloadBytes = downloads
+    .filter(f => fileSource(manifest, f) !== 'bundle')
+    .reduce((n, f) => n + f.size, needsBundle ? manifest.bundle.size : 0)
+
   return {
     fromVersion: state.installedVersion,
     toVersion: manifest.version,
     versionChanged: state.installedVersion !== manifest.version,
     downloads,
-    downloadBytes: downloads.reduce((n, f) => n + f.size, 0),
+    downloadBytes,
     removals,
     strays,
     records,
@@ -177,6 +183,59 @@ async function downloadVerified ({ url, dest, sha1, size, signal, onBytes, retri
     }
   }
   throw new Error(`${path.basename(dest)} 다운로드 실패: ${lastError.message}`)
+}
+
+function openZip (file) {
+  const yauzl = require('yauzl')
+  return new Promise((resolve, reject) => {
+    yauzl.open(file, { lazyEntries: true, autoClose: false }, (err, zip) => err ? reject(err) : resolve(zip))
+  })
+}
+
+// zip 에서 wanted(경로 → 파일 정보) 에 있는 항목만 꺼내고, 각각 해시를 검증한 뒤 제자리에 둔다.
+async function extractFromBundle (zipFile, wanted, instanceDir, onFile) {
+  const zip = await openZip(zipFile)
+  const remaining = new Map(wanted.map(f => [f.path, f]))
+  try {
+    await new Promise((resolve, reject) => {
+      zip.on('error', reject)
+      zip.on('end', resolve)
+      zip.on('entry', entry => {
+        const f = remaining.get(entry.fileName)
+        if (!f) return zip.readEntry()
+        zip.openReadStream(entry, async (err, stream) => {
+          if (err) return reject(err)
+          const dest = toLocal(instanceDir, f.path)
+          const tmp = dest + '.part'
+          try {
+            await fsp.mkdir(path.dirname(dest), { recursive: true })
+            const hash = crypto.createHash('sha1')
+            let size = 0
+            const tap = new Transform({
+              transform (chunk, _enc, cb) {
+                hash.update(chunk)
+                size += chunk.length
+                cb(null, chunk)
+              }
+            })
+            await pipeline(stream, tap, fs.createWriteStream(tmp))
+            if (hash.digest('hex') !== f.sha1 || size !== f.size) throw new Error(`${f.path}: 묶음 안의 파일이 매니페스트와 다릅니다`)
+            await fsp.rename(tmp, dest)
+            remaining.delete(f.path)
+            await onFile(f, dest)
+            zip.readEntry()
+          } catch (e) {
+            await fsp.rm(tmp, { force: true })
+            reject(e)
+          }
+        })
+      })
+      zip.readEntry()
+    })
+  } finally {
+    zip.close()
+  }
+  if (remaining.size) throw new Error(`묶음에 없는 파일: ${[...remaining.keys()].slice(0, 3).join(', ')}`)
 }
 
 async function runPool (items, concurrency, worker) {
@@ -225,26 +284,38 @@ async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, sta
     await saveState(stateFile, { ...emptyState(), installedVersion: state.installedVersion, files: { ...state.files, ...files } })
   }
 
+  const onBytes = n => {
+    doneBytes += n
+    report({ phase: 'download', current: doneBytes, total, files: doneFiles, fileTotal: plan.downloads.length })
+  }
+  const record = async (f, dest) => {
+    doneFiles++
+    if ((f.mode || 'overwrite') === 'overwrite') {
+      const st = await fsp.stat(dest)
+      files[f.path] = { sha1: f.sha1, size: st.size, mtimeMs: st.mtimeMs }
+    }
+    report({ phase: 'download', current: doneBytes, total, files: doneFiles, fileTotal: plan.downloads.length, text: f.path })
+  }
+
+  const single = plan.downloads.filter(f => fileSource(manifest, f) !== 'bundle')
+  const bundled = plan.downloads.filter(f => fileSource(manifest, f) === 'bundle')
+
   try {
-    await runPool(plan.downloads, concurrency, async f => {
-      const dest = toLocal(instanceDir, f.path)
-      await downloadVerified({
-        url: new URL(objectPath(f.sha1), manifestUrl).toString(),
-        dest,
-        sha1: f.sha1,
-        size: f.size,
-        signal,
-        onBytes: n => {
-          doneBytes += n
-          report({ phase: 'download', current: doneBytes, total, files: doneFiles, fileTotal: plan.downloads.length })
-        }
-      })
-      doneFiles++
-      if ((f.mode || 'overwrite') === 'overwrite') {
-        const st = await fsp.stat(dest)
-        files[f.path] = { sha1: f.sha1, size: st.size, mtimeMs: st.mtimeMs }
+    if (bundled.length) {
+      const b = manifest.bundle
+      const zipFile = path.join(instanceDir, '.launcher-tmp', `bundle-${b.sha1}.zip`)
+      await downloadVerified({ url: new URL(b.url, manifestUrl).toString(), dest: zipFile, sha1: b.sha1, size: b.size, signal, onBytes })
+      try {
+        await extractFromBundle(zipFile, bundled, instanceDir, record)
+      } finally {
+        await fsp.rm(path.dirname(zipFile), { recursive: true, force: true })
       }
-      report({ phase: 'download', current: doneBytes, total, files: doneFiles, fileTotal: plan.downloads.length, text: f.path })
+    }
+    await runPool(single, concurrency, async f => {
+      const dest = toLocal(instanceDir, f.path)
+      const url = f.url || new URL(objectPath(f.sha1), manifestUrl).toString()
+      await downloadVerified({ url, dest, sha1: f.sha1, size: f.size, signal, onBytes })
+      await record(f, dest)
     })
   } catch (e) {
     await failState()
