@@ -41,9 +41,9 @@ test('매니페스트 검증은 위험한 경로를 거부한다', () => {
 })
 
 test('서버 자동 접속 인자', () => {
-  assert.deepEqual(serverArgs({ minecraft: '1.20.1', server: { address: 'play.x.com' } }),
-    { quickPlay: { type: 'multiplayer', identifier: 'play.x.com:25565' } })
+  assert.deepEqual(serverArgs({ minecraft: '1.21.1', server: { address: 'play.x.com' } }),
+    { quickPlayMultiplayer: 'play.x.com:25565' })
   assert.deepEqual(serverArgs({ minecraft: '1.12.2', server: { address: 'play.x.com', port: 25570 } }),
-    { quickPlay: { type: 'legacy', identifier: 'play.x.com:25570' } })
-  assert.deepEqual(serverArgs({ minecraft: '1.20.1' }), {})
+    { server: { ip: 'play.x.com', port: 25570 } })
+  assert.deepEqual(serverArgs({ minecraft: '1.21.1' }), {})
 })

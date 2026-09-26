@@ -72,15 +72,15 @@ async function detectFromCurseForge (sourceDir) {
     return {}
   }
   const minecraft = info.gameVersion || (info.baseModLoader && info.baseModLoader.minecraftVersion)
-  const name = info.baseModLoader && info.baseModLoader.name // 예: forge-47.2.0, neoforge-21.1.77, fabric-0.15.11-1.20.1
+  const name = info.baseModLoader && info.baseModLoader.name // 예: neoforge-21.1.77, forge-47.2.0, fabric-0.15.11-1.20.1
   if (!minecraft) return {}
   if (!name) return { minecraft, loader: { type: 'vanilla' } }
   const dash = name.indexOf('-')
   const type = name.slice(0, dash).toLowerCase()
   let version = name.slice(dash + 1)
-  if ((type === 'fabric' || type === 'quilt') && version.endsWith(`-${minecraft}`)) {
-    version = version.slice(0, -(minecraft.length + 1))
-  }
+  // 이름에 MC 버전이 앞(neoforge-1.21.1-21.1.77)이나 뒤(fabric-0.16.5-1.21.1)에 붙는 경우가 있다.
+  if (version.startsWith(`${minecraft}-`)) version = version.slice(minecraft.length + 1)
+  if (version.endsWith(`-${minecraft}`)) version = version.slice(0, -(minecraft.length + 1))
   return { minecraft, loader: { type, version } }
 }
 

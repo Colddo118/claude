@@ -213,30 +213,36 @@ ipcMain.handle('game:launch', () => exclusive(async () => {
 
   // 3) 자바/로더/바닐라 준비 후 실행
   const settings = await loadSettings()
-  await fsp.mkdir(dirs.logs, { recursive: true })
-  const log = fs.createWriteStream(path.join(dirs.logs, 'latest.log'))
-  const { child } = await game.launchGame({
+  const child = await game.launchGame({
     manifest,
     dirs,
     authorization,
     settings,
+    launcher: { name: config.appName, version: app.getVersion() },
     onStatus: text => progress({ phase: 'launch', text }),
-    onProgress: e => progress({ phase: 'launch', text: `마인크래프트 파일 받는 중 (${e.type})`, current: e.current, total: e.total }),
-    onLog: line => log.write(line.endsWith('\n') ? line : line + '\n')
+    onProgress: e => progress({
+      phase: 'launch',
+      text: `${e.text} ${Math.floor((e.current / e.total) * 100)}%`,
+      current: e.current,
+      total: e.total
+    })
   })
+  await fsp.mkdir(dirs.logs, { recursive: true })
+  const log = fs.createWriteStream(path.join(dirs.logs, 'latest.log'))
+  child.stdout && child.stdout.pipe(log, { end: false })
+  child.stderr && child.stderr.pipe(log, { end: false })
 
   gameProcess = child
   progress({ phase: 'running', text: '게임 실행 중' })
-  const startedAt = Date.now()
   if (settings.hideOnLaunch && win) win.hide()
+  child.on('error', e => log.write(`[launcher] 게임 프로세스 오류: ${e.message}\n`))
   child.on('close', code => {
     gameProcess = null
     log.end()
     if (!win || win.isDestroyed()) return app.quit()
     win.show()
     win.focus()
-    // 1분도 못 버티고 비정상 종료되면 크래시로 본다.
-    send('game:exit', { code, crashed: code !== 0 && Date.now() - startedAt < 60_000 })
+    send('game:exit', { code, crashed: code !== 0 })
   })
   return { started: true }
 }))

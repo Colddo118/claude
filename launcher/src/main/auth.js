@@ -72,7 +72,7 @@ async function loginInteractive (store) {
   }
 }
 
-// 저장된 계정으로 MCLC 용 인증 객체를 만든다. 실패하면 null (다시 로그인 필요).
+// 저장된 계정으로 게임 실행용 인증 정보를 만든다. 저장된 계정이 없으면 null.
 async function getLaunchAuthorization (store) {
   const refreshToken = await store.readRefreshToken()
   if (!refreshToken) return null
@@ -81,7 +81,7 @@ async function getLaunchAuthorization (store) {
     const xbox = await new Auth('select_account').refresh(refreshToken)
     const mc = await xbox.getMinecraft()
     await store.write(xbox.save(), mc.profile)
-    return mc.mclc()
+    return { accessToken: mc.mcToken, profile: mc.profile, xuid: mc.xuid }
   } catch (e) {
     const err = friendlyError(e)
     err.needsLogin = true

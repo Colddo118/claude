@@ -15,7 +15,7 @@
 | 매번 **새 인스턴스**가 생겨서 설정/미니맵/맵 데이터를 직접 옮김 | 같은 폴더를 **제자리 패치**하므로 옮길 필요 없음 |
 | 전체 모드팩을 매번 다시 받음 | **바뀐 파일만** 받음 (해시 비교) |
 | 업데이트 글을 따로 찾아봐야 함 | 런처 화면에 패치노트가 바로 뜸 (새 버전은 NEW 표시) |
-| 유저가 자바, 포지 설치 | 런처가 자바(Temurin)/포지/패브릭까지 알아서 설치 |
+| 유저가 자바, 네오포지 설치 | 런처가 자바 21(Temurin)/NeoForge 까지 알아서 설치 |
 
 ## 구조
 
@@ -84,7 +84,8 @@
      --version 1.3.0 \
      --notes-file notes.md
    ```
-   - MC 버전과 Forge/NeoForge/Fabric 버전은 커스포지의 `minecraftinstance.json` 에서 자동으로 읽습니다.
+   - MC 버전과 NeoForge 버전(예: 1.21.1 / 21.1.77)은 커스포지의 `minecraftinstance.json` 에서 자동으로 읽습니다.
+   - NeoForge 버전을 올리면 런처가 알아서 새 버전을 설치합니다.
    - `pack-dist` 폴더는 지우지 말고 계속 쓰세요 (이전 패치노트 이력을 여기서 이어 붙임).
 4. `pack-dist` 업로드. **objects 먼저, manifest.json 마지막**에 올려야 업로드 도중 접속한 유저가 깨지지 않습니다.
    R2 + [rclone](https://rclone.org) 예시:
@@ -128,7 +129,7 @@ launcher/
   launcher.config.json     런처 이름, 매니페스트 주소
   src/common/manifest.js   매니페스트 규칙 (빌드 도구와 공유)
   src/main/updater.js      업데이트 엔진: 비교(plan) → 적용(apply)
-  src/main/game.js         자바/로더 설치, 게임 실행 (minecraft-launcher-core)
+  src/main/game.js         자바/로더 설치, 게임 실행 (@xmcl/installer, @xmcl/core)
   src/main/auth.js         마이크로소프트 로그인 (msmc), 토큰 암호화 저장
   src/main/main.js         Electron 메인 프로세스
   src/renderer/            화면
@@ -138,10 +139,14 @@ tools/build-manifest.js    관리자용 매니페스트 생성기
 ## 알아둘 점
 
 - **테스트 범위**: 업데이트 엔진(설치·업데이트·유저 파일 보존·손상 복구·체크섬 검증)과 화면은 자동 테스트와 실제 실행으로
-  확인했습니다. 반면 **실제 마인크래프트 실행(로그인 → 자바/포지 설치 → 게임 시작)은 개발 환경의 네트워크 제한 때문에
+  확인했습니다. 반면 **실제 마인크래프트 실행(로그인 → 자바/NeoForge 설치 → 게임 시작)은 개발 환경의 네트워크 제한 때문에
   돌려보지 못했습니다.** 유저들에게 배포하기 전에 본인 PC 에서 한 번 끝까지 실행해 보세요.
-- **로더 지원**: Forge(1.13+)·Fabric·Quilt 는 minecraft-launcher-core 의 표준 방식으로 실행합니다.
-  NeoForge 와 1.12.2 이하 Forge 는 실험적입니다.
+- **기준 환경은 1.21.1 NeoForge** 입니다. 설치/실행은 XMCL 라이브러리가 공식 NeoForge 설치 파일을 그대로 돌려서
+  (post-processor 포함) 하고, 실행 인자는 공식 런처와 같은 방식으로 버전 JSON 에서 만듭니다.
+  NeoForge 1.21.1 형태의 버전 JSON 으로 실제 java 명령줄(모듈 경로, ignoreList, 메인 클래스, 로그인·자동접속 인자)을
+  만들어 검증하는 테스트가 있습니다. Forge·Fabric·Quilt 도 같은 경로로 동작하도록 되어 있습니다.
+- **첫 실행은 오래 걸립니다**: 마인크래프트 본체 + 자바 21 + NeoForge 설치(패치 작업 포함)로 처음 한 번은 몇 분 걸립니다.
+  두 번째부터는 파일 확인만 하고 바로 켜집니다.
 - **마이크로소프트 로그인**: msmc 라이브러리의 기본 방식(마이크로소프트 로그인 창을 런처 안에 띄움)을 씁니다.
   여러 오픈소스 런처가 쓰는 방식이지만, 유저가 많아지면 Azure 앱을 직접 등록하고 Mojang 에 Minecraft API 사용 신청을
   하는 것을 권장합니다.
@@ -149,4 +154,3 @@ tools/build-manifest.js    관리자용 매니페스트 생성기
   "추가 정보 → 실행" 으로 넘어가면 됩니다. (없애려면 코드 서명 인증서 필요)
 - **모드 재배포 라이선스**: 모드 파일을 직접 호스팅하는 방식이라, 일부 모드는 라이선스상 재배포가 금지되어 있을 수 있습니다.
   지인 서버 규모에서는 흔히 쓰는 방식이지만 공개 배포라면 확인하세요.
-- `minecraft-launcher-core` 가 오래된 `request` 패키지에 의존해서 `npm audit` 경고가 나옵니다 (런처 동작에는 영향 없음).

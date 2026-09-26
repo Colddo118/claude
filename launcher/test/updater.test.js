@@ -165,3 +165,11 @@ test('커스포지 Fabric 인스턴스 감지', async () => {
   }))
   assert.deepEqual(await detectFromCurseForge(dir), { minecraft: '1.21.1', loader: { type: 'fabric', version: '0.16.5' } })
 })
+
+test('커스포지 NeoForge 인스턴스 감지', async () => {
+  for (const name of ['neoforge-21.1.77', 'neoforge-1.21.1-21.1.77']) {
+    const dir = path.join(tmp, `neo-${name}`)
+    write(dir, 'minecraftinstance.json', JSON.stringify({ gameVersion: '1.21.1', baseModLoader: { name } }))
+    assert.deepEqual(await detectFromCurseForge(dir), { minecraft: '1.21.1', loader: { type: 'neoforge', version: '21.1.77' } })
+  }
+})

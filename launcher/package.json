@@ -13,8 +13,8 @@
     "build:linux": "electron-builder --linux AppImage"
   },
   "dependencies": {
-    "extract-zip": "^2.0.1",
-    "minecraft-launcher-core": "3.18.2",
+    "@xmcl/core": "2.15.1",
+    "@xmcl/installer": "6.1.2",
     "msmc": "5.0.5"
   },
   "devDependencies": {
@@ -43,5 +43,8 @@
       "category": "Game"
     },
     "publish": null
+  },
+  "overrides": {
+    "undici": "^7.29.0"
   }
 }

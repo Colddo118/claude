@@ -1,23 +1,21 @@
 'use strict'
 
-// 자바 준비 → 모드로더 준비 → 게임 실행.
-// 실제 바닐라/라이브러리/에셋 다운로드와 실행 인자 구성은 minecraft-launcher-core(MCLC)가 한다.
+// 바닐라 설치 → 자바 준비 → 모드로더 설치 → 라이브러리/에셋 확인 → 게임 실행.
+// 설치와 실행 인자 구성은 @xmcl/installer, @xmcl/core 가 한다. 공식 런처와 같은 방식으로
+// 버전 JSON 의 jvm 인자(모듈 경로, ${library_directory} 등)를 해석하므로 NeoForge 도 그대로 실행된다.
 
 const fs = require('node:fs')
 const fsp = fs.promises
 const path = require('node:path')
 const os = require('node:os')
+const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { Readable } = require('node:stream')
 const { pipeline } = require('node:stream/promises')
 const { compareVersions } = require('../common/manifest')
 
-const MOJANG_VERSION_MANIFEST = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json'
-
-async function fetchJson (url) {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`)
-  return res.json()
+function xmcl () {
+  return { core: require('@xmcl/core'), installer: require('@xmcl/installer') }
 }
 
 async function downloadTo (url, dest) {
@@ -33,25 +31,16 @@ function exists (p) {
   return fs.existsSync(p)
 }
 
-// ---------------------------------------------------------------- Java
-
-// 모장 버전 JSON 의 javaVersion.majorVersion 을 그대로 따른다 (없으면 옛 버전 → 8).
-async function requiredJavaMajor (manifest, cacheDir) {
-  if (manifest.java) return Number(manifest.java)
-  const cacheFile = path.join(cacheDir, `java-major-${manifest.minecraft}.txt`)
-  try {
-    return Number(await fsp.readFile(cacheFile, 'utf8'))
-  } catch {}
-  const list = await fetchJson(MOJANG_VERSION_MANIFEST)
-  const entry = list.versions.find(v => v.id === manifest.minecraft)
-  if (!entry) throw new Error(`마인크래프트 ${manifest.minecraft} 버전을 찾을 수 없습니다`)
-  const version = await fetchJson(entry.url)
-  let major = (version.javaVersion && version.javaVersion.majorVersion) || 8
-  if (major === 16) major = 17 // 1.17 은 17 로 잘 돈다 (Temurin 16 JRE 배포 없음)
-  await fsp.mkdir(cacheDir, { recursive: true })
-  await fsp.writeFile(cacheFile, String(major))
-  return major
+// xmcl 작업(Task)을 실행하면서 전체 진행률을 onProgress 로 흘려보낸다.
+function runTask (task, onProgress) {
+  return task.startAndWait({
+    onUpdate () {
+      if (onProgress && task.total > 0) onProgress({ current: task.progress, total: task.total })
+    }
+  })
 }
+
+// ---------------------------------------------------------------- Java
 
 function findJavaExecutable (dir) {
   const exe = process.platform === 'win32' ? 'javaw.exe' : 'java'
@@ -75,14 +64,14 @@ function run (cmd, args) {
   })
 }
 
+// 윈도우 10+ 에 기본 포함된 bsdtar(System32\tar.exe)는 zip 도 풀 수 있다.
+// PATH 에 Git 의 GNU tar 가 먼저 잡히면 zip 을 못 푸므로 경로를 직접 지정한다.
 async function extractArchive (archive, destDir) {
   await fsp.mkdir(destDir, { recursive: true })
-  if (archive.endsWith('.zip')) {
-    const extract = require('extract-zip')
-    await extract(archive, { dir: path.resolve(destDir) })
-  } else {
-    await run('tar', ['-xzf', archive, '-C', destDir])
-  }
+  const tar = process.platform === 'win32'
+    ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+    : 'tar'
+  await run(tar, ['-xf', archive, '-C', destDir])
 }
 
 // Eclipse Temurin(Adoptium) JRE 를 런처 폴더 안에 받아 둔다. 사용자 PC 에 자바가 없어도 된다.
@@ -116,131 +105,156 @@ async function ensureJava (major, runtimeDir, onStatus) {
   return found
 }
 
-// ---------------------------------------------------------------- Mod loader
+// 모장 버전 JSON 의 javaVersion.majorVersion 을 따른다 (1.21.1 → 21). 매니페스트의 java 가 있으면 우선.
+function requiredJavaMajor (manifest, vanillaJson) {
+  if (manifest.java) return Number(manifest.java)
+  const major = (vanillaJson.javaVersion && vanillaJson.javaVersion.majorVersion) || 8
+  return major === 16 ? 17 : major // Temurin 16 JRE 배포가 없음, 1.17 은 17 로 잘 돈다
+}
 
-// MCLC 에 넘길 { forge } 또는 { custom } 옵션을 만든다.
-async function ensureLoader (manifest, rootDir, onStatus) {
+// ---------------------------------------------------------------- Minecraft + loader
+
+async function ensureVanilla (mc, minecraftVersion, onStatus, onProgress) {
+  const jsonPath = mc.getVersionJson(minecraftVersion)
+  if (!exists(jsonPath) || !exists(mc.getVersionJar(minecraftVersion))) {
+    const { installer } = xmcl()
+    onStatus && onStatus(`마인크래프트 ${minecraftVersion} 설치 중...`)
+    let list
+    try {
+      list = await installer.getVersionList()
+    } catch (e) {
+      throw new Error(`모장 서버에 연결하지 못했습니다. 인터넷 연결을 확인하세요. (${e.message})`)
+    }
+    const meta = list.versions.find(v => v.id === minecraftVersion)
+    if (!meta) throw new Error(`마인크래프트 ${minecraftVersion} 버전을 찾을 수 없습니다`)
+    await runTask(installer.installTask(meta, mc), onProgress)
+  }
+  return JSON.parse(await fsp.readFile(jsonPath, 'utf8'))
+}
+
+function loaderKey ({ minecraft, loader }) {
+  return `${loader.type}-${minecraft}-${loader.version || ''}`
+}
+
+async function readLoaderIndex (mc) {
+  try {
+    return JSON.parse(await fsp.readFile(mc.getPath('launcher-loaders.json'), 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+async function writeLoaderIndex (mc, index) {
+  await fsp.writeFile(mc.getPath('launcher-loaders.json'), JSON.stringify(index, null, 2))
+}
+
+// 모드로더를 설치하고 실행할 버전 id 를 돌려준다. 한 번 설치하면 기록해 두고 건너뛴다.
+async function ensureLoader (manifest, mc, javaPath, { onStatus, onProgress, force = false } = {}) {
   const { type, version } = manifest.loader
-  const mc = manifest.minecraft
-  const loaderDir = path.join(rootDir, 'loaders')
+  const mcVersion = manifest.minecraft
+  if (type === 'vanilla') return mcVersion
 
-  if (type === 'vanilla') return {}
+  const key = loaderKey(manifest)
+  const index = await readLoaderIndex(mc)
+  if (!force && index[key] && exists(mc.getVersionJson(index[key]))) return index[key]
 
-  if (type === 'forge' || type === 'neoforge') {
-    let url
-    let file
-    if (type === 'forge') {
-      const legacy = compareVersions(mc, '1.13') < 0
-      const classifier = legacy ? 'universal' : 'installer'
-      const id = `${mc}-${version}`
-      file = `forge-${id}-${classifier}.jar`
-      url = `https://maven.minecraftforge.net/net/minecraftforge/forge/${id}/${file}`
-    } else {
-      file = `neoforge-${version}-installer.jar`
-      url = `https://maven.neoforged.net/releases/net/neoforged/neoforge/${version}/${file}`
-    }
-    const dest = path.join(loaderDir, file)
-    if (!exists(dest)) {
-      onStatus && onStatus(`${type} ${version} 다운로드 중...`)
-      await downloadTo(url, dest)
-    }
-    return { forge: dest }
+  const { installer } = xmcl()
+  onStatus && onStatus(`${type} ${version} 설치 중... (처음 한 번은 몇 분 걸릴 수 있어요)`)
+  let versionId
+  if (type === 'neoforge') {
+    // 1.20.1 NeoForge 는 net.neoforged:forge 로 배포되었다.
+    const project = mcVersion === '1.20.1' ? 'forge' : 'neoforge'
+    const artifact = project === 'forge' ? `${mcVersion}-${version}` : version
+    versionId = await runTask(installer.installNeoForgedTask(project, artifact, mc, { java: javaPath }), onProgress)
+  } else if (type === 'forge') {
+    versionId = await runTask(installer.installForgeTask({ mcversion: mcVersion, version }, mc, { java: javaPath }), onProgress)
+  } else if (type === 'fabric') {
+    versionId = await installer.installFabric({ minecraftVersion: mcVersion, version, minecraft: mc })
+  } else if (type === 'quilt') {
+    versionId = await installer.installQuiltVersion({ minecraftVersion: mcVersion, version, minecraft: mc })
+  } else {
+    throw new Error(`지원하지 않는 로더: ${type}`)
   }
 
-  if (type === 'fabric' || type === 'quilt') {
-    const id = `${type}-loader-${version}-${mc}`
-    const jsonPath = path.join(rootDir, 'versions', id, `${id}.json`)
-    if (!exists(jsonPath)) {
-      onStatus && onStatus(`${type} ${version} 설치 중...`)
-      const base = type === 'fabric'
-        ? 'https://meta.fabricmc.net/v2/versions/loader'
-        : 'https://meta.quiltmc.org/v3/versions/loader'
-      const profile = await fetchJson(`${base}/${mc}/${version}/profile/json`)
-      profile.id = id
-      await fsp.mkdir(path.dirname(jsonPath), { recursive: true })
-      await fsp.writeFile(jsonPath, JSON.stringify(profile, null, 2))
-    }
-    return { custom: id }
-  }
-
-  throw new Error(`지원하지 않는 로더: ${type}`)
+  index[key] = versionId
+  await writeLoaderIndex(mc, index)
+  return versionId
 }
 
 // ---------------------------------------------------------------- Launch
 
-let mclcPatched = false
-function loadMclc () {
-  const mclc = require('minecraft-launcher-core')
-  if (!mclcPatched) {
-    // MCLC 는 `java -version` 출력을 파싱하는데, 창 없는 javaw.exe 는 출력이 비어 있을 수 있어
-    // 그대로 두면 예외가 난다. 자바는 ensureJava 가 이미 확인했으므로 존재 여부만 본다.
-    const Handler = require('minecraft-launcher-core/components/handler')
-    Handler.prototype.checkJava = function (java) {
-      return Promise.resolve(exists(java) ? { run: true } : { run: false, message: `Java 없음: ${java}` })
-    }
-    mclcPatched = true
-  }
-  return mclc
-}
-
 function serverArgs (manifest) {
   const s = manifest.server
   if (!s || !s.address) return {}
-  const identifier = `${s.address}:${s.port || 25565}`
-  // 1.20 부터는 --server 대신 Quick Play 를 써야 바로 접속된다 (MCLC 의 legacy 타입이 --server/--port).
-  const type = compareVersions(manifest.minecraft, '1.20') >= 0 ? 'multiplayer' : 'legacy'
-  return { quickPlay: { type, identifier } }
+  const port = Number(s.port) || 25565
+  // 1.20 부터는 --server 대신 Quick Play 를 써야 바로 접속된다.
+  if (compareVersions(manifest.minecraft, '1.20') >= 0) {
+    return { quickPlayMultiplayer: `${s.address}:${port}` }
+  }
+  return { server: { ip: s.address, port } }
+}
+
+function jvmArgs (settings) {
+  const user = (settings.jvmArgs || '').split(/\s+/).filter(Boolean)
+  if (!user.length) return undefined // xmcl 기본 G1GC 튜닝 인자 사용
+  const { core } = xmcl()
+  return [...core.DEFAULT_EXTRA_JVM_ARGS.filter(a => !a.startsWith('-Xmx')), ...user]
 }
 
 /**
  * 게임을 실행하고 child process 를 돌려준다.
- * events: onStatus(text), onProgress({current,total,type}), onLog(line)
+ * authorization: { accessToken, profile: { id, name }, xuid }
  */
-async function launchGame ({ manifest, dirs, authorization, settings, onStatus, onProgress, onLog }) {
-  const major = await requiredJavaMajor(manifest, dirs.cache)
-  const javaPath = settings.javaPath || await ensureJava(major, dirs.runtime, onStatus)
-  const loaderOpts = await ensureLoader(manifest, dirs.minecraft, onStatus)
+async function launchGame ({ manifest, dirs, authorization, settings, launcher, onStatus, onProgress }) {
+  const { core, installer } = xmcl()
+  const mc = core.MinecraftFolder.from(dirs.minecraft)
+  const progress = label => p => onProgress && onProgress({ ...p, text: label })
 
-  const { Client } = loadMclc()
-  const client = new Client()
-  let lastDebug = ''
-  client.on('debug', line => { lastDebug = line; onLog && onLog(line) })
-  client.on('data', line => onLog && onLog(line))
-  // MCLC progress 이벤트: { type: 'assets' | 'natives' | 'classes' ..., task: 현재, total: 전체 }
-  client.on('progress', e => onProgress && onProgress({ type: e.type, current: e.task, total: e.total }))
+  const vanillaJson = await ensureVanilla(mc, manifest.minecraft, onStatus, progress('마인크래프트 설치 중'))
+  const javaPath = settings.javaPath || await ensureJava(requiredJavaMajor(manifest, vanillaJson), dirs.runtime, onStatus)
 
+  let versionId = await ensureLoader(manifest, mc, javaPath, { onStatus, onProgress: progress(`${manifest.loader.type} 설치 중`) })
+
+  // 라이브러리/에셋이 빠졌거나 깨졌으면 받는다. 로더 파일이 망가져 있으면 로더를 한 번 다시 설치한다.
+  onStatus && onStatus('게임 파일 확인 중...')
+  const checkDeps = async () => runTask(installer.installDependenciesTask(await core.Version.parse(mc, versionId)), progress('게임 파일 받는 중'))
+  try {
+    await checkDeps()
+  } catch (e) {
+    if (manifest.loader.type === 'vanilla') throw e
+    versionId = await ensureLoader(manifest, mc, javaPath, { onStatus, onProgress: progress('로더 재설치 중'), force: true })
+    await checkDeps()
+  }
+
+  onStatus && onStatus('게임 시작 중...')
+  return core.launch(buildLaunchOptions({ manifest, dirs, authorization, settings, launcher, javaPath, versionId }))
+}
+
+function buildLaunchOptions ({ manifest, dirs, authorization, settings, launcher, javaPath, versionId }) {
   const maxMB = settings.memoryMB
-  const autoConnect = settings.autoConnect !== false ? serverArgs(manifest) : {}
-  const opts = {
-    root: dirs.minecraft,
-    authorization,
-    version: {
-      number: manifest.minecraft,
-      type: 'release',
-      ...(loaderOpts.custom ? { custom: loaderOpts.custom } : {})
-    },
-    ...(loaderOpts.forge ? { forge: loaderOpts.forge } : {}),
-    memory: { max: `${maxMB}M`, min: `${Math.min(1024, maxMB)}M` },
+  return {
+    gamePath: dirs.instance,
+    resourcePath: dirs.minecraft,
     javaPath,
-    customArgs: (settings.jvmArgs || '').split(/\s+/).filter(Boolean),
-    ...autoConnect,
-    overrides: {
-      gameDirectory: dirs.instance,
-      detached: false,
-      maxSockets: 16
-    }
+    version: versionId,
+    gameProfile: { id: authorization.profile.id, name: authorization.profile.name },
+    accessToken: authorization.accessToken,
+    userType: 'msa',
+    properties: {},
+    launcherName: launcher.name,
+    launcherBrand: launcher.version,
+    maxMemory: maxMB,
+    minMemory: Math.min(1024, maxMB),
+    extraJVMArgs: jvmArgs(settings),
+    // 1.19+ 게임 인자의 --xuid / --clientId 값. 객체형 feature 값은 인자 치환에 쓰인다.
+    features: { launcher_ids: { auth_xuid: authorization.xuid || '0', clientid: crypto.randomUUID() } },
+    ...(settings.autoConnect !== false ? serverArgs(manifest) : {}),
+    extraExecOption: { detached: false }
   }
-
-  onStatus && onStatus('마인크래프트 파일 확인 중...')
-  const child = await client.launch(opts)
-  if (!child) {
-    throw new Error(`게임을 시작하지 못했습니다. ${lastDebug.replace('[MCLC]: ', '')}`)
-  }
-  return { child, client }
 }
 
 function totalMemoryMB () {
   return Math.floor(os.totalmem() / 1024 / 1024)
 }
 
-module.exports = { launchGame, ensureJava, ensureLoader, requiredJavaMajor, totalMemoryMB, serverArgs }
+module.exports = { launchGame, buildLaunchOptions, ensureJava, ensureLoader, requiredJavaMajor, totalMemoryMB, serverArgs, jvmArgs }
