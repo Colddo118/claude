@@ -7,16 +7,32 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- 제목 줄: 인게임 창처럼 왼쪽 제목 · 오른쪽 흐린 정보 · 아래 구분선 -->
-  <header class="titlebar">
-    <img class="logo" src="assets/logo.png" alt="" aria-hidden="true">
-    <h1 id="app-name">런처</h1>
-    <p id="pack-meta" class="muted">서버 정보를 불러오는 중...</p>
+  <!-- 필드 보스 창(Q3) 문법: 창 가득 보스 그림 · 왼쪽 위 금색 제목 · 오른쪽 위 글자 탭 · 왼쪽 정보 · 오른쪽 아래 버튼 -->
+  <header class="topbar">
+    <div class="brand">
+      <img class="logo" src="assets/logo.png" alt="" aria-hidden="true">
+      <span class="brand-name">모드팩 런처</span>
+    </div>
+    <nav class="tabs">
+      <span id="account-name" class="muted">로그인 안 됨</span>
+      <button id="login-btn" class="tab">로그인</button>
+      <button id="logout-btn" class="tab hidden">로그아웃</button>
+      <button id="link-website" class="tab hidden">웹사이트</button>
+      <button id="link-discord" class="tab hidden">디스코드</button>
+    </nav>
   </header>
 
-  <main class="body">
-    <section class="well notes">
-      <div class="well-head">
+  <main class="hero">
+    <p id="pack-meta" class="meta">서버 정보를 불러오는 중...</p>
+    <h1 id="app-name">런처</h1>
+    <div class="install">
+      <div id="status-text">준비 중...</div>
+      <div class="progress"><div id="progress-bar"></div></div>
+      <div id="version-text" class="muted small"></div>
+    </div>
+
+    <section class="notes">
+      <div class="notes-head">
         <h2>패치노트</h2>
         <span id="update-badge" class="chip hidden">새 업데이트</span>
       </div>
@@ -24,31 +40,8 @@
         <p class="muted">불러오는 중...</p>
       </div>
     </section>
-
-    <div class="side">
-      <section class="well install">
-        <div class="well-head"><h2>설치</h2></div>
-        <div id="status-text">준비 중...</div>
-        <div class="progress"><div id="progress-bar"></div></div>
-        <div id="version-text" class="muted small"></div>
-      </section>
-
-      <section class="well account-well">
-        <div class="well-head"><h2>계정</h2></div>
-        <div id="account" class="account">
-          <span id="account-name" class="muted">로그인 안 됨</span>
-          <button id="login-btn" class="ghost">로그인</button>
-          <button id="logout-btn" class="ghost hidden">로그아웃</button>
-        </div>
-        <div class="links">
-          <button id="link-website" class="ghost hidden">웹사이트</button>
-          <button id="link-discord" class="ghost hidden">디스코드</button>
-        </div>
-      </section>
-    </div>
   </main>
 
-  <!-- 아랫줄: 왼쪽 보조 버튼 · 오른쪽 초록 행동 버튼 -->
   <footer class="bottombar">
     <button id="settings-btn" class="ghost" title="설정">설정</button>
     <button id="play-btn" class="primary" disabled>확인 중...</button>
