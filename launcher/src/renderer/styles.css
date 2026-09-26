@@ -1,164 +1,325 @@
+/*
+ * KubejsRPG 런처 — 모드팩 인게임 창(능력치 창 · kubejs/client_scripts/aa_rpg_gui.js 의 RPG_GUI)을 그대로 옮긴 것.
+ * 1 GUI 픽셀 = --u (3px). 인게임 치수(RPG_GUI.M)를 --u 배수로 쓴다.
+ *   창   = 속 PANEL + 테두리(위 밝음 / 아래 어두움, 세로변은 절반에서 갈림)
+ *   제목 = 왼쪽 굵은 제목 · 오른쪽 흐린 정보 · 아래 구분선
+ *   칸   = 속 ROW_B + 1px 선(평평) · 첫 줄 = 굵은 칸 이름 + 오른쪽 흐린 보조 정보
+ *   버튼 = 두 톤 속 + 테두리(위 hi / 아래 edge) · OFF · GO(초록) · TAB_ON(금색) · DIS
+ *   막대 = 트랙 BAR_BG + 평평한 한 색
+ *   글자 = Galmuri(모드팩과 같은 글꼴) · 말줄임 없음
+ */
+
+@font-face {
+  font-family: "Galmuri11";
+  src: url("assets/fonts/Galmuri11-Bold.ttf") format("truetype");
+  font-weight: 700;
+}
+@font-face {
+  font-family: "Galmuri9";
+  src: url("assets/fonts/Galmuri9.ttf") format("truetype");
+}
+
 :root {
-  --bg: #11131a;
-  --panel: #1a1d27;
-  --panel-2: #222634;
-  --border: #2d3244;
-  --text: #e6e8ef;
-  --muted: #8b91a7;
-  --accent: #4ade80;
-  --accent-dark: #16a34a;
-  --warn: #fbbf24;
-  --danger: #f87171;
+  --u: 3px;
+
+  --panel: #eae0cc;
+  --border-hi: #fffcf2;
+  --border-lo: #9a8869;
+  --well: #e4d9c1;
+  --well-edge: #a08d6c;
+  --head-bg: #dcd0b4;
+  --band: #f6efdf;
+  --divider: #c6b491;
+  --sel: #f0de8a;
+  --sel-edge: #9c7418;
+  --text: #3a3128;
+  --dim: #736a5e;
+  --gold: #7a5810;
+  --on: #3a6124;
+  --red: #9e2b20;
+  --bar-bg: #d2c4a6;
+  --bar: #6e9e4a;
+  --knob: #9a8869;
+  --veil: rgba(58, 49, 40, .6);
+
+  --off-hi: #baab8e; --off-lo: #a89877; --off-edge: #7e6f52; --off-text: #4e4536;
+  --go-hi: #7cb544;  --go-lo: #4c7d28;  --go-edge: #2f5216;  --go-text: #ffffff;
+  --tab-hi: #fff0a0; --tab-lo: #f0de8a; --tab-edge: #9c7418; --tab-text: #3a3128;
+  --dis-hi: #c9bfab; --dis-lo: #b8ae9a; --dis-edge: #9c9180; --dis-text: #8a8073;
+
+  --bold: "Galmuri11", "Malgun Gothic", sans-serif;
+  --body: "Galmuri9", "Malgun Gothic", sans-serif;
 }
 
 * { box-sizing: border-box; }
 
-html, body {
-  margin: 0;
-  height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
-  font-size: 14px;
-  user-select: none;
+html { height: 100%; background: #1b1712; }
+
+/*
+ * 입체 틀 = RPG_GUI.bevel + split 그대로.
+ *   위 변 --hi · 아래 변 --lo (양 끝 1픽셀 빼고) · 좌우 세로변은 절반 위 --hi / 절반 아래 --lo · 네 꼭짓점은 비움
+ *   속(1픽셀 안쪽)은 위 절반 --fa / 아래 절반 --fb
+ * 창 = (PANEL, PANEL) + bevel(BORDER_HI, BORDER_LO) · 버튼 = split(hi, lo) + bevel(hi, edge)
+ */
+.bevel, body, dialog, button {
+  background:
+    linear-gradient(var(--hi), var(--hi)) var(--u) 0 / calc(100% - var(--u) * 2) var(--u) no-repeat,
+    linear-gradient(var(--lo), var(--lo)) var(--u) 100% / calc(100% - var(--u) * 2) var(--u) no-repeat,
+    linear-gradient(transparent var(--u), var(--hi) var(--u), var(--hi) 50%, var(--lo) 50%, var(--lo) calc(100% - var(--u)), transparent calc(100% - var(--u))) 0 0 / var(--u) 100% no-repeat,
+    linear-gradient(transparent var(--u), var(--hi) var(--u), var(--hi) 50%, var(--lo) 50%, var(--lo) calc(100% - var(--u)), transparent calc(100% - var(--u))) 100% 0 / var(--u) 100% no-repeat,
+    linear-gradient(var(--fa) 50%, var(--fb) 50%) var(--u) var(--u) / calc(100% - var(--u) * 2) calc(100% - var(--u) * 2) no-repeat;
 }
 
 body {
+  --hi: var(--border-hi); --lo: var(--border-lo); --fa: var(--panel); --fb: var(--panel);
+  margin: 0;
+  height: 100%;
   display: grid;
   grid-template-rows: auto 1fr auto;
+  padding: calc(var(--u) * 4) calc(var(--u) * 6) calc(var(--u) * 5);
+  color: var(--text);
+  font: 20px/1.35 var(--body);
+  user-select: none;
 }
 
-h1, h2, h3 { margin: 0; }
-h1 { font-size: 18px; }
-h2 { font-size: 15px; }
+h1, h2, h3 { margin: 0; font-family: var(--bold); font-weight: 700; }
+p { margin: 0; }
 
-.muted { color: var(--muted); }
-.small { font-size: 12px; }
+.muted { color: var(--dim); }
+.small { font-size: 18px; }
 .hidden { display: none !important; }
 
+/* ---------- 버튼 (창 틀 · 버튼 · 탭만 입체) ---------- */
+/* 버튼 = split(hi, lo) + bevel(hi, edge) · 높이 BTN_H 16 · 호버 = 속에 HOVER(28000000) */
 button {
-  font: inherit;
-  color: inherit;
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  border-radius: 8px;
-  padding: 8px 14px;
+  --p-hi: var(--off-hi); --p-lo: var(--off-lo); --p-edge: var(--off-edge);
+  --hi: var(--p-hi); --lo: var(--p-edge); --fa: var(--p-hi); --fb: var(--p-lo);
+  font: 20px/1 var(--body);
+  color: var(--off-text);
+  height: calc(var(--u) * 16);
+  padding: 0 calc(var(--u) * 10);
+  border: 0;
+  border-radius: 0;
   cursor: pointer;
+  white-space: nowrap;
 }
-button:hover:not(:disabled) { border-color: var(--muted); }
-button:disabled { opacity: .5; cursor: default; }
-button.ghost { background: transparent; }
+button:hover:not(:disabled) {
+  --fa: color-mix(in srgb, var(--p-hi), #000 15.7%);
+  --fb: color-mix(in srgb, var(--p-lo), #000 15.7%);
+}
+button:focus-visible { outline: var(--u) solid var(--sel-edge); outline-offset: var(--u); }
+button:disabled {
+  --p-hi: var(--dis-hi); --p-lo: var(--dis-lo); --p-edge: var(--dis-edge);
+  color: var(--dis-text);
+  cursor: default;
+}
+
 button.primary {
-  background: var(--accent-dark);
-  border-color: var(--accent-dark);
-  color: #fff;
+  --p-hi: var(--go-hi); --p-lo: var(--go-lo); --p-edge: var(--go-edge);
+  font-family: var(--bold);
   font-weight: 700;
-  font-size: 16px;
-  padding: 12px 36px;
-  min-width: 180px;
+  color: var(--go-text);
+  min-width: calc(var(--u) * 80);
 }
-button.primary:hover:not(:disabled) { background: #15803d; }
-button.primary.update { background: #d97706; border-color: #d97706; }
+/* 설치 · 업데이트가 필요한 상태 = 켜진 탭 금색 */
+button.primary.update {
+  --p-hi: var(--tab-hi); --p-lo: var(--tab-lo); --p-edge: var(--tab-edge);
+  color: var(--tab-text);
+}
+button.primary:disabled {
+  --p-hi: var(--dis-hi); --p-lo: var(--dis-lo); --p-edge: var(--dis-edge);
+  color: var(--dis-text);
+}
 
-.topbar {
+/* ---------- 제목 줄 ---------- */
+.titlebar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  gap: calc(var(--u) * 3);
+  padding-bottom: calc(var(--u) * 3);
+  border-bottom: var(--u) solid var(--divider);
+  margin-bottom: calc(var(--u) * 5);
 }
-.brand { display: flex; gap: 12px; align-items: center; }
 .logo {
-  width: 40px; height: 40px;
-  display: grid; place-items: center;
-  border-radius: 10px;
-  background: var(--accent-dark);
-  font-size: 22px;
+  width: calc(var(--u) * 10); height: calc(var(--u) * 10);
+  image-rendering: pixelated;
+  flex: none;
 }
-.topbar-right, .account { display: flex; gap: 8px; align-items: center; }
-.account { margin-left: 8px; padding-left: 12px; border-left: 1px solid var(--border); }
+#app-name { font-size: 24px; }
+#pack-meta { margin-left: auto; text-align: right; }
 
-.content { overflow: hidden; padding: 16px 20px; }
-.notes {
-  height: 100%;
+/* ---------- 칸 ---------- */
+.body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr calc(var(--u) * 120);
+  gap: calc(var(--u) * 5);
+}
+.side {
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  gap: calc(var(--u) * 5);
 }
-.notes-header {
-  display: flex; gap: 10px; align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+/* 칸 = well(속 ROW_B + 1px 선 WELL_EDGE, 꼭짓점까지 채움) · 머리 = sectionHead(HEAD_BG 띠 13 · 굵은 이름 · 오른쪽 흐린 글자) */
+.well {
+  background: var(--well);
+  border: var(--u) solid var(--well-edge);
+  padding: 0 0 calc(var(--u) * 4);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 2);
+  min-height: 0;
 }
-.badge {
-  background: var(--warn);
-  color: #1f1300;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-.changelog {
-  overflow-y: auto;
-  padding: 8px 16px 16px;
-  user-select: text;
-}
-.entry { padding: 12px 0; border-bottom: 1px solid var(--border); }
-.entry:last-child { border-bottom: none; }
-.entry-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 6px; }
-.entry-head .ver { font-weight: 700; font-size: 15px; }
-.entry.new .ver { color: var(--warn); }
-.entry ul { margin: 4px 0; padding-left: 20px; }
-.entry p { margin: 4px 0; line-height: 1.5; }
-.entry h3 { font-size: 14px; margin: 10px 0 4px; }
-
-.bottombar {
+.well > :not(.well-head) { margin-left: calc(var(--u) * 4); margin-right: calc(var(--u) * 4); }
+.well-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 20px;
-  border-top: 1px solid var(--border);
-  background: var(--panel);
+  justify-content: space-between;
+  gap: calc(var(--u) * 3);
+  min-height: calc(var(--u) * 13);
+  padding: 0 calc(var(--u) * 4);
+  background: var(--head-bg);
 }
-.status { flex: 1; min-width: 0; }
-#status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 6px; }
-#status-text.error { color: var(--danger); white-space: normal; user-select: text; line-height: 1.45; }
+.well-head h2 { font-size: 20px; }
+.well-head .muted, .well-head strong { font-weight: 400; }
+
+/* 칸 이름 오른쪽 작은 표시 (새 업데이트) */
+.chip, .badge {
+  font: 700 18px/1 var(--bold);
+  color: #fff;
+  background: var(--red);
+  padding: var(--u) calc(var(--u) * 2);
+}
+
+/* 패치노트 */
+.changelog {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-right: calc(var(--u) * -2);
+  padding-right: calc(var(--u) * 2);
+  user-select: text;
+}
+.changelog::-webkit-scrollbar { width: calc(var(--u) * 2); }
+.changelog::-webkit-scrollbar-track { background: var(--divider); }
+.changelog::-webkit-scrollbar-thumb { background: var(--knob); min-height: calc(var(--u) * 8); }
+
+.entry { padding: calc(var(--u) * 2) 0 calc(var(--u) * 3); border-bottom: var(--u) solid var(--divider); }
+.entry:last-child { border-bottom: 0; }
+.entry-head { display: flex; align-items: center; gap: calc(var(--u) * 3); }
+.entry-head .ver { font: 700 20px/1.35 var(--bold); }
+.entry-head .small { margin-left: auto; }
+.entry.new .ver { color: var(--gold); }
+.entry ul { margin: calc(var(--u) * 1) 0 0; padding-left: calc(var(--u) * 7); }
+.entry li::marker { color: var(--sel-edge); }
+.entry p { margin: calc(var(--u) * 1) 0 0; }
+.entry h3 { font-size: 20px; margin: calc(var(--u) * 3) 0 0; }
+
+/* 설치 칸 */
+#status-text { overflow-wrap: anywhere; }
+#status-text.error { color: var(--red); white-space: normal; user-select: text; line-height: 1.4; }
 .progress {
-  height: 6px;
-  background: var(--panel-2);
-  border-radius: 999px;
+  height: calc(var(--u) * 3);
+  background: var(--bar-bg);
   overflow: hidden;
-  margin-bottom: 4px;
 }
 #progress-bar {
   height: 100%;
   width: 0;
-  background: var(--accent);
+  background: var(--bar);
   transition: width .15s linear;
 }
+.install { flex: 1; }
 
+
+/* 계정 칸 */
+.account { display: flex; align-items: center; gap: calc(var(--u) * 3); }
+#account-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--bold); font-weight: 700; color: var(--text); }
+.links { display: flex; gap: calc(var(--u) * 2); }
+.links:not(:has(button:not(.hidden))) { display: none; }
+
+/* ---------- 아랫줄 ---------- */
+.bottombar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: calc(var(--u) * 5);
+}
+.bottombar #settings-btn { min-width: calc(var(--u) * 50); }
+
+/* ---------- 설정 창 ---------- */
 dialog {
-  background: var(--panel);
+  --hi: var(--border-hi); --lo: var(--border-lo); --fa: var(--panel); --fb: var(--panel);
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  width: 440px;
-  padding: 20px;
+  font: 20px/1.35 var(--body);
+  border: 0;
+  width: calc(var(--u) * 190);
+  padding: calc(var(--u) * 4) calc(var(--u) * 6) calc(var(--u) * 5);
 }
-dialog::backdrop { background: rgba(0, 0, 0, .6); }
-.settings-form { display: flex; flex-direction: column; gap: 14px; }
-.settings-form label { display: flex; flex-direction: column; gap: 6px; }
-.settings-form label.check { flex-direction: row; align-items: center; gap: 8px; }
+dialog::backdrop { background: var(--veil); }
+.settings-form { display: flex; flex-direction: column; gap: calc(var(--u) * 4); }
+.dialog-title {
+  padding-bottom: calc(var(--u) * 3);
+  border-bottom: var(--u) solid var(--divider);
+}
+.dialog-title h2 { font-size: 24px; }
+#mem-value { font-family: var(--bold); font-weight: 700; color: var(--gold); }
+
+.settings-form label.check { display: flex; align-items: center; gap: calc(var(--u) * 3); cursor: pointer; }
+.settings-form label.field { display: flex; flex-direction: column; gap: calc(var(--u) * 1); }
 .settings-form input[type=text] {
-  font: inherit; color: inherit;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
+  font: 20px/1 var(--body);
+  color: var(--text);
+  height: calc(var(--u) * 11);
+  padding: 0 calc(var(--u) * 3);
+  background: var(--band);
+  border: var(--u) solid var(--well-edge);
+  border-radius: 0;
+  user-select: text;
 }
-.settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; }
-.dialog-buttons .primary { font-size: 14px; padding: 8px 20px; min-width: 0; }
+.settings-form input[type=text]:focus { outline: none; border-color: var(--sel-edge); }
+.settings-form input[type=text]::placeholder { color: #8e8374; }
+
+input[type=checkbox] {
+  appearance: none;
+  flex: none;
+  width: calc(var(--u) * 6); height: calc(var(--u) * 6);
+  margin: 0;
+  background: var(--band);
+  border: var(--u) solid var(--well-edge);
+  display: grid; place-items: center;
+  cursor: pointer;
+}
+input[type=checkbox]:checked { background: var(--go-lo); border-color: var(--go-edge); }
+input[type=checkbox]:checked::after {
+  content: "";
+  width: calc(var(--u) * 2); height: calc(var(--u) * 2);
+  background: #fff;
+}
+input[type=checkbox]:focus-visible { outline: var(--u) solid var(--sel-edge); outline-offset: var(--u); }
+
+input[type=range] {
+  appearance: none;
+  width: 100%;
+  height: calc(var(--u) * 8);
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+input[type=range]::-webkit-slider-runnable-track { height: calc(var(--u) * 3); background: var(--bar-bg); }
+input[type=range]::-webkit-slider-thumb {
+  appearance: none;
+  width: calc(var(--u) * 4); height: calc(var(--u) * 8);
+  margin-top: calc(var(--u) * -2.5);
+  background:
+    linear-gradient(var(--tab-edge), var(--tab-edge)) bottom / 100% var(--u) no-repeat,
+    linear-gradient(var(--tab-hi) 50%, var(--tab-lo) 50%);
+  outline: var(--u) solid var(--tab-edge);
+  outline-offset: calc(var(--u) * -1);
+}
+input[type=range]:focus { outline: none; }
+
+.settings-actions { display: flex; flex-wrap: wrap; gap: calc(var(--u) * 2); }
+.dialog-buttons { display: flex; justify-content: space-between; }
+.dialog-buttons .primary { min-width: calc(var(--u) * 50); }

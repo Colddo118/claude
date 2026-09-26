@@ -7,65 +7,80 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo" aria-hidden="true">▣</div>
-      <div>
-        <h1 id="app-name">런처</h1>
-        <p id="pack-meta" class="muted">서버 정보를 불러오는 중...</p>
-      </div>
-    </div>
-    <div class="topbar-right">
-      <button id="link-website" class="ghost hidden">웹사이트</button>
-      <button id="link-discord" class="ghost hidden">디스코드</button>
-      <div id="account" class="account">
-        <span id="account-name" class="muted">로그인 안 됨</span>
-        <button id="login-btn" class="ghost">로그인</button>
-        <button id="logout-btn" class="ghost hidden">로그아웃</button>
-      </div>
-    </div>
+  <!-- 제목 줄: 인게임 창처럼 왼쪽 제목 · 오른쪽 흐린 정보 · 아래 구분선 -->
+  <header class="titlebar">
+    <img class="logo" src="assets/logo.png" alt="" aria-hidden="true">
+    <h1 id="app-name">런처</h1>
+    <p id="pack-meta" class="muted">서버 정보를 불러오는 중...</p>
   </header>
 
-  <main class="content">
-    <section class="notes">
-      <div class="notes-header">
+  <main class="body">
+    <section class="well notes">
+      <div class="well-head">
         <h2>패치노트</h2>
-        <span id="update-badge" class="badge hidden">새 업데이트</span>
+        <span id="update-badge" class="chip hidden">새 업데이트</span>
       </div>
       <div id="changelog" class="changelog">
         <p class="muted">불러오는 중...</p>
       </div>
     </section>
+
+    <div class="side">
+      <section class="well install">
+        <div class="well-head"><h2>설치</h2></div>
+        <div id="status-text">준비 중...</div>
+        <div class="progress"><div id="progress-bar"></div></div>
+        <div id="version-text" class="muted small"></div>
+      </section>
+
+      <section class="well account-well">
+        <div class="well-head"><h2>계정</h2></div>
+        <div id="account" class="account">
+          <span id="account-name" class="muted">로그인 안 됨</span>
+          <button id="login-btn" class="ghost">로그인</button>
+          <button id="logout-btn" class="ghost hidden">로그아웃</button>
+        </div>
+        <div class="links">
+          <button id="link-website" class="ghost hidden">웹사이트</button>
+          <button id="link-discord" class="ghost hidden">디스코드</button>
+        </div>
+      </section>
+    </div>
   </main>
 
+  <!-- 아랫줄: 왼쪽 보조 버튼 · 오른쪽 초록 행동 버튼 -->
   <footer class="bottombar">
-    <div class="status">
-      <div id="status-text">준비 중...</div>
-      <div class="progress"><div id="progress-bar"></div></div>
-      <div id="version-text" class="muted small"></div>
-    </div>
     <button id="settings-btn" class="ghost" title="설정">설정</button>
     <button id="play-btn" class="primary" disabled>확인 중...</button>
   </footer>
 
   <dialog id="settings">
     <form method="dialog" class="settings-form">
-      <h2>설정</h2>
-      <label>
-        메모리 (RAM) <strong id="mem-value"></strong>
-        <input id="mem-input" type="range" min="1024" step="512">
+      <div class="dialog-title"><h2>설정</h2></div>
+
+      <section class="well">
+        <div class="well-head">
+          <h2>메모리 (RAM)</h2>
+          <strong id="mem-value"></strong>
+        </div>
+        <input id="mem-input" type="range" min="1024" step="512" aria-label="메모리">
         <span class="muted small">PC 전체 메모리 <span id="mem-total"></span></span>
-      </label>
-      <label class="check">
-        <input id="autoconnect-input" type="checkbox"> 게임 시작 시 서버에 자동 접속
-      </label>
-      <label class="check">
-        <input id="hide-input" type="checkbox"> 게임 실행 중 런처 숨기기
-      </label>
-      <label>
-        추가 JVM 인자 <span class="muted small">(모르면 비워두세요)</span>
-        <input id="jvm-input" type="text" placeholder="-XX:+UseG1GC">
-      </label>
+      </section>
+
+      <section class="well">
+        <div class="well-head"><h2>게임</h2></div>
+        <label class="check">
+          <input id="autoconnect-input" type="checkbox"> 게임 시작 시 서버에 자동 접속
+        </label>
+        <label class="check">
+          <input id="hide-input" type="checkbox"> 게임 실행 중 런처 숨기기
+        </label>
+        <label class="field">
+          <span>추가 JVM 인자 <span class="muted">(모르면 비워두세요)</span></span>
+          <input id="jvm-input" type="text" placeholder="-XX:+UseG1GC">
+        </label>
+      </section>
+
       <div class="settings-actions">
         <button type="button" id="open-folder-btn" class="ghost">게임 폴더 열기</button>
         <button type="button" id="open-logs-btn" class="ghost">로그 폴더 열기</button>
