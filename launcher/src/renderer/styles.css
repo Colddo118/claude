@@ -168,6 +168,9 @@ button.tab:hover { color: var(--gold); box-shadow: inset 0 calc(var(--u) * -1) 0
 .tabs { display: flex; align-items: center; gap: calc(var(--u) * 8); text-shadow: 0 var(--u) 0 #0e0b08, 0 0 calc(var(--u) * 3) #0e0b08; }
 .who { display: flex; align-items: baseline; gap: calc(var(--u) * 2); }
 #account-name { font-family: var(--bold); font-weight: 700; color: var(--gold); }
+/* 윗줄 탭에서는 이름만 (보조 줄은 설명이 겹쳐 복잡해 보임) · 로그인 전엔 "로그인" 탭만 */
+.tabs #account-sub { display: none; }
+.who.signed-out { display: none; }
 
 /* ---------- 왼쪽 정보 ---------- */
 .hero {

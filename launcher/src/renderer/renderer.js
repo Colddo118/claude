@@ -119,6 +119,7 @@ function renderChangelog (entries) {
 function renderAccount () {
   ui.accountName.textContent = account ? account.name : '로그인 안 됨'
   ui.accountSub.textContent = account ? '마이크로소프트 계정' : '로그인이 필요해요'
+  $('account').classList.toggle('signed-out', !account)
   ui.loginBtn.classList.toggle('hidden', !!account)
   ui.logoutBtn.classList.toggle('hidden', !account)
 }
