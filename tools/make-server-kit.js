@@ -82,6 +82,8 @@ const CLAUDE_MD = `# 이 폴더: KubejsRPG 마인크래프트 서버 (NeoForge)
   관리자가 patch.bat 으로 GitHub 릴리스에 올리면, 이 폴더의 server-update.js 가 받아서 적용합니다.
 - 서버 스크립트(kubejs/server_scripts, kubejs/data)는 암호화되어 오고, server-update.json 의 키로 풉니다.
 - 평소 운영: 서버를 끄고(콘솔에 stop) \`서버시작.bat\` → 최신 패치 적용 후 서버 실행.
+- 빈 폴더에 키트만 넣고 \`서버시작.bat\` 을 실행해도 서버가 만들어집니다: 자바(없으면) → NeoForge 서버 설치
+  → 모드팩 파일 전부 → EULA 동의 질문 → 메모리 설정 → 서버 실행.
 
 ## 파일
 | 파일 | 용도 |
@@ -111,10 +113,9 @@ const CLAUDE_MD = `# 이 폴더: KubejsRPG 마인크래프트 서버 (NeoForge)
     클라이언트 전용 모드가 서버에 있음. 어떤 모드인지 찾아서, 관리자 인스턴스의 pack.config.json 에
     \`"clientOnly": ["mods/파일이름앞부분*"]\` 를 추가하라고 사용자에게 알려주세요.
   - 모드 버전 불일치, 의존성 누락 → 어느 모드인지 정리해서 알려주세요 (고치는 건 관리자 인스턴스에서).
-- **"NeoForge ... 이 설치되어 있지 않습니다"**: 관리자가 NeoForge 버전을 올린 것. 서버를 끄고 월드 백업 후,
-  https://maven.neoforged.net/releases/net/neoforged/neoforge/<버전>/ 의 installer.jar 를 받아
-  서버용으로 설치합니다 (installer 의 --help 로 서버 설치 옵션 확인). run.bat 이 새로 만들어지면
-  기존 user_jvm_args.txt 의 메모리 설정이 유지되는지 확인하세요.
+- **NeoForge 서버 설치/버전 업**: server-update.js 가 자동으로 합니다 (자바가 없으면 서버 폴더 runtime 에 받음,
+  공식 설치 파일을 받아 서버 모드로 설치). 자동 설치가 실패하면 출력을 읽고 원인을 보고하세요.
+  NeoForge 가 새로 설치되면 user_jvm_args.txt 의 -Xmx 가 남아 있는지 확인하세요.
 - **되돌리기**: .update-backup/<시각>/ 의 파일을 제자리로 복사.
 `
 
@@ -123,7 +124,9 @@ const README = `KubejsRPG 서버 키트
 
 처음 한 번:
  1. 서버 컴에 Node.js (LTS) 를 설치합니다: https://nodejs.org
- 2. 이 폴더 안의 파일 4개를 서버 폴더(run.bat 이 있는 곳)에 복사합니다.
+ 2. 이 폴더 안의 파일을 서버 폴더에 복사합니다.
+    새 서버라면 빈 폴더에 넣으면 됩니다. 서버시작.bat 을 실행하면 자바·NeoForge 서버·모드팩을 알아서 설치하고,
+    마인크래프트 EULA 동의를 물어본 뒤 서버를 켭니다.
     server-update.js / server-update.json / 서버시작.bat / 서버업데이트.bat / 미리보기.bat / CLAUDE.md
  3. 서버를 run.bat 이 아닌 다른 방법으로 켠다면 server-update.json 의 "start" 를 그 명령으로 바꿉니다.
 

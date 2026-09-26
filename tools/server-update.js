@@ -24,6 +24,7 @@ const updater = require('../launcher/src/main/updater')
 const secret = require('../launcher/src/common/secret')
 const { validateManifest, matchesAny } = require('../launcher/src/common/manifest')
 const github = require('./lib/github')
+const setup = require('./lib/server-setup')
 
 const CONFIG_FILE = 'server-update.json'
 const STATE_FILE = '.server-update-state.json'
@@ -43,12 +44,6 @@ function listJars (serverDir) {
   } catch {
     return []
   }
-}
-
-function loaderInstalled (serverDir, loader) {
-  if (loader.type === 'neoforge') return fs.existsSync(path.join(serverDir, 'libraries', 'net', 'neoforged', 'neoforge', loader.version))
-  if (loader.type === 'forge') return fs.readdirSync(path.join(serverDir, 'libraries', 'net', 'minecraftforge', 'forge'), { withFileTypes: true }).some(e => e.name.endsWith(`-${loader.version}`))
-  return true
 }
 
 // keep: 서버에 이미 있으면 절대 덮어쓰지 않을 파일 (server-update.json 의 "keep", 서버가 직접 기록하는 데이터 등)
@@ -87,6 +82,7 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
     removals: plan.removals,
     loader: manifest.loader,
     kept,
+    manifest,
     loaderMissing: false,
     backupDir: null
   }
@@ -112,19 +108,34 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
     if (!fs.existsSync(report.backupDir)) report.backupDir = null
   }
   try {
-    report.loaderMissing = !loaderInstalled(serverDir, manifest.loader)
+    report.loaderMissing = !setup.loaderInstalled(serverDir, manifest.loader)
   } catch {
     report.loaderMissing = true
   }
   return report
 }
 
-function startServer (serverDir, command) {
+function startServer (serverDir, command, binDir) {
+  const env = { ...process.env }
+  // 자바를 서버 폴더(runtime)에 받았으면 run.bat 이 그 자바를 쓰도록 PATH 앞에 둔다
+  if (binDir) env.PATH = `${binDir}${path.delimiter}${env.PATH || env.Path || ''}`
   return new Promise(resolve => {
-    const p = spawn(command, { cwd: serverDir, stdio: 'inherit', shell: true })
+    const p = spawn(command, { cwd: serverDir, stdio: 'inherit', shell: true, env })
     p.on('close', code => resolve(code))
   })
 }
+
+function ask (question) {
+  return new Promise(resolve => {
+    process.stdout.write(question)
+    process.stdin.resume()
+    process.stdin.once('data', d => {
+      process.stdin.pause()
+      resolve(String(d).trim().toLowerCase())
+    })
+  })
+}
+const yes = a => ['y', 'yes', 'ㅛ', '예', '네'].includes(a)
 
 async function main () {
   const serverDir = process.cwd()
@@ -135,16 +146,17 @@ async function main () {
   const check = process.argv.includes('--check')
 
   console.log(check ? '서버 패치 미리보기 (아무것도 바꾸지 않음)...' : '서버 패치 확인 중...')
-  let updateFailed = false
+  let failed = false
+  let r = null
   try {
-    const r = await updateServer({ serverDir, repo: cfg.repo, key: cfg.key, keep: cfg.keep || [], check, log: console.log })
+    r = await updateServer({ serverDir, repo: cfg.repo, key: cfg.key, keep: cfg.keep || [], check, log: console.log })
     if (check) {
       console.log(`설치된 버전: ${r.fromVersion || '(없음)'} → 최신: v${r.toVersion}`)
       for (const p of r.downloads) console.log(`  + 받을 파일: ${p}`)
       for (const p of r.removals) console.log(`  - 지울 파일: ${p}`)
       for (const p of r.kept) console.log(`  = 보존 (keep): ${p}`)
       console.log(`합계: 받을 파일 ${r.downloads.length}개, 지울 파일 ${r.removals.length}개, 보존 ${r.kept.length}개`)
-      if (r.loaderMissing) console.log(`⚠ 이 서버에 ${r.loader.type} ${r.loader.version} 이 설치되어 있지 않습니다.`)
+      if (r.loaderMissing) console.log(`• ${r.loader.type} ${r.loader.version} 서버가 아직 없습니다 → 실제 실행 때 자동 설치`)
       return process.exit(0)
     }
     if (!r.downloads.length && !r.removals.length) {
@@ -154,27 +166,39 @@ async function main () {
       for (const p of r.removals) console.log(`  - ${p}`)
       if (r.backupDir) console.log(`  이전 파일 백업: ${r.backupDir}`)
     }
-    if (r.loaderMissing) {
-      console.log('')
-      console.log(`⚠ 이 서버에 ${r.loader.type} ${r.loader.version} 이 설치되어 있지 않습니다.`)
-      console.log('  관리자가 모드로더 버전을 올린 것 같습니다. 서버용 설치 파일로 새 버전을 설치한 뒤 켜 주세요.')
-      if (start) updateFailed = true
-    }
   } catch (e) {
     console.error(`✘ 패치 실패: ${e.message}`)
-    updateFailed = true
+    failed = true
   }
 
-  if (!start) return process.exit(updateFailed ? 1 : 0)
-  if (updateFailed) {
-    const answer = await new Promise(resolve => {
-      process.stdout.write('\n그래도 서버를 켤까요? (y/n) ')
-      process.stdin.once('data', d => resolve(String(d).trim().toLowerCase()))
-    })
-    if (!['y', 'yes', 'ㅛ'].includes(answer)) return process.exit(1)
+  // 모드로더 서버가 없으면 (새 서버, 또는 관리자가 버전을 올림) 자동 설치
+  let java = null
+  if (r && r.loaderMissing) {
+    try {
+      console.log('')
+      java = await setup.prepareJava(serverDir, setup.requiredJava(r.manifest), console.log)
+      await setup.installLoader({ serverDir, manifest: r.manifest, javaPath: java.javaPath, log: console.log })
+      console.log(`✔ ${r.loader.type} ${r.loader.version} 서버 설치 완료`)
+    } catch (e) {
+      console.error(`✘ ${e.message}`)
+      failed = true
+    }
   }
+
+  if (!start) return process.exit(failed ? 1 : 0)
+  if (failed && !yes(await ask('\n문제가 있었습니다. 그래도 서버를 켤까요? (y/n) '))) return process.exit(1)
+
+  if (!java && r) java = await setup.prepareJava(serverDir, setup.requiredJava(r.manifest), console.log)
+  if (!setup.eulaAccepted(serverDir)) {
+    console.log('\n서버를 켜려면 마인크래프트 EULA 에 동의해야 합니다: https://aka.ms/MinecraftEULA')
+    if (!yes(await ask('EULA 에 동의합니까? (y/n) '))) return process.exit(1)
+    await setup.acceptEula(serverDir)
+  }
+  const mem = await setup.ensureMemory(serverDir)
+  if (mem) console.log(`서버 메모리를 ${mem} 로 설정했습니다 (user_jvm_args.txt 에서 바꿀 수 있어요)`)
+
   console.log(`\n서버 시작: ${cfg.start || 'run.bat'}\n`)
-  process.exit(await startServer(serverDir, cfg.start || 'run.bat'))
+  process.exit(await startServer(serverDir, cfg.start || 'run.bat', java && java.binDir))
 }
 
 if (require.main === module) {

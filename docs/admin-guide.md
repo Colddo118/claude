@@ -38,7 +38,9 @@ patch.bat 으로 내보냅니다. 서버 폴더를 직접 고치면 다음 패�
 ## 처음 한 번: 서버 컴
 
 1. Node.js LTS 설치: https://nodejs.org
-2. 내 컴의 `server-kit` 폴더 안 파일들을 **서버 폴더(run.bat 이 있는 곳)** 에 복사
+2. 내 컴의 `server-kit` 폴더 안 파일들을 **서버 폴더(run.bat 이 있는 곳)** 에 복사.
+   **새 서버라면 빈 폴더**에 넣고 `서버시작.bat` 만 실행하면 됩니다. 자바(없으면), NeoForge 서버,
+   모드팩 파일 전부를 알아서 설치하고, 마인크래프트 EULA 동의를 물어본 뒤 메모리를 설정하고 서버를 켭니다.
    (USB, 디스코드 나에게 보내기 등): `server-update.js`, `server-update.json`, `서버시작.bat`, `서버업데이트.bat`, `미리보기.bat`, `CLAUDE.md`
 3. 서버를 run.bat 이 아닌 방법으로 켜 왔다면 `server-update.json` 의 `"start"` 를 그 명령으로 바꿈
 4. **처음 적용 전에 `미리보기.bat`** 으로 바뀔 파일을 확인합니다. 서버가 직접 기록하는 데이터 파일
@@ -103,9 +105,8 @@ Attempted to load class net/minecraft/client/... for invalid dist DEDICATED_SERV
 
 ## 모드로더(NeoForge) 버전을 올렸을 때
 
-친구들 런처는 새 NeoForge 를 자동으로 설치하지만, **서버의 NeoForge 는 자동으로 바뀌지 않습니다.**
-서버시작.bat 이 "NeoForge ... 이 설치되어 있지 않습니다" 라고 알려주면, NeoForge 서버 설치 파일로
-서버 폴더에 새 버전을 설치한 뒤 다시 켜 주세요.
+친구들 런처와 서버 모두 자동입니다. 서버시작.bat 이 새 버전이 없는 걸 보고 공식 설치 파일로 서버용 NeoForge 를
+설치합니다. 설치 후 `user_jvm_args.txt` 의 메모리 설정(-Xmx)이 남아 있는지만 확인하세요.
 
 ## 되돌리기
 
