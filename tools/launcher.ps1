@@ -61,7 +61,8 @@ try {
   Write-Host '[3/3] 빌드 (몇 분 걸려요)' -ForegroundColor Cyan
   if (Test-Path $DistDir) { Remove-Item $DistDir -Recurse -Force }
   # Node 20 은 electron-builder 가 쓰는 모듈 방식을 켜 줘야 한다 (22 이상은 기본)
-  $major = [int]((& node -p 'process.versions.node.split(".")[0]').Trim())
+  # node --version = "v20.17.0" (PowerShell 5.1 은 node 에 넘기는 인자 속 큰따옴표를 지워 버려서 -p 식은 못 씀)
+  $major = [int]((& node --version).Trim().TrimStart('v').Split('.')[0])
   if ($major -lt 22) { $env:NODE_OPTIONS = '--experimental-require-module' }
   try { Run 'npm' @('run', 'build:win') } finally { Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue }
 } finally {
