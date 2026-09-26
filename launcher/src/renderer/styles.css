@@ -125,7 +125,7 @@ button.primary.update { background: #d97706; border-color: #d97706; }
 }
 .status { flex: 1; min-width: 0; }
 #status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 6px; }
-#status-text.error { color: var(--danger); }
+#status-text.error { color: var(--danger); white-space: normal; user-select: text; line-height: 1.45; }
 .progress {
   height: 6px;
   background: var(--panel-2);

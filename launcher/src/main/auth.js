@@ -7,18 +7,39 @@ const fs = require('node:fs')
 const fsp = fs.promises
 const path = require('node:path')
 const { safeStorage } = require('electron')
+const { resolveMinecraftAccount } = require('./minecraft-auth')
 
 const ERROR_MESSAGES = {
   'error.gui.closed': '로그인 창이 닫혔습니다.',
-  'error.auth.minecraft.profile': '이 계정에는 마인크래프트 자바 에디션이 없습니다.',
-  'error.auth.minecraft.entitlements': '이 계정에는 마인크래프트 자바 에디션이 없습니다.',
   'error.auth.xsts.userNotFound': '이 마이크로소프트 계정에 Xbox 프로필이 없습니다. minecraft.net 에서 먼저 로그인해 주세요.',
   'error.auth.xsts.child': '미성년자 계정은 가족 그룹에 추가되어야 합니다.'
 }
 
 function friendlyError (e) {
+  if (e instanceof Error && e.diagnostic) return e // minecraft-auth 가 이미 원인을 설명함
   const code = typeof e === 'string' ? e : e && (e.ts || e.message)
   return new Error(ERROR_MESSAGES[code] || `로그인 실패: ${code || e}`)
+}
+
+// 로그인 조사 정보(토큰 제외)를 남긴다. 문제가 생기면 이 파일을 보면 원인을 알 수 있다.
+async function writeDiagnostic (file, diagnostic) {
+  if (!file || !diagnostic) return
+  try {
+    await fsp.mkdir(path.dirname(file), { recursive: true })
+    await fsp.writeFile(file, JSON.stringify(diagnostic, null, 2))
+  } catch {}
+}
+
+async function signIn (xbox, store, diagnosticFile) {
+  try {
+    const account = await resolveMinecraftAccount(xbox)
+    await writeDiagnostic(diagnosticFile, account.diagnostic)
+    await store.write(xbox.save(), account.profile)
+    return account
+  } catch (e) {
+    await writeDiagnostic(diagnosticFile, e.diagnostic || { at: new Date().toISOString(), error: String(e && (e.ts || e.message || e)) })
+    throw e
+  }
 }
 
 class AccountStore {
@@ -59,29 +80,27 @@ class AccountStore {
   }
 }
 
-async function loginInteractive (store) {
+async function loginInteractive (store, diagnosticFile) {
   const { Auth } = require('msmc')
   const auth = new Auth('select_account')
   try {
     const xbox = await auth.launch('electron', { width: 520, height: 680, resizable: false, title: '마이크로소프트 로그인' })
-    const mc = await xbox.getMinecraft()
-    await store.write(xbox.save(), mc.profile)
-    return mc.profile
+    const { profile } = await signIn(xbox, store, diagnosticFile)
+    return profile
   } catch (e) {
     throw friendlyError(e)
   }
 }
 
 // 저장된 계정으로 게임 실행용 인증 정보를 만든다. 저장된 계정이 없으면 null.
-async function getLaunchAuthorization (store) {
+async function getLaunchAuthorization (store, diagnosticFile) {
   const refreshToken = await store.readRefreshToken()
   if (!refreshToken) return null
   const { Auth } = require('msmc')
   try {
     const xbox = await new Auth('select_account').refresh(refreshToken)
-    const mc = await xbox.getMinecraft()
-    await store.write(xbox.save(), mc.profile)
-    return { accessToken: mc.mcToken, profile: mc.profile, xuid: mc.xuid }
+    const { accessToken, profile, xuid } = await signIn(xbox, store, diagnosticFile)
+    return { accessToken, profile, xuid }
   } catch (e) {
     const err = friendlyError(e)
     err.needsLogin = true

@@ -24,7 +24,8 @@ const dirs = {
 const files = {
   state: path.join(base, 'state.json'),
   settings: path.join(base, 'settings.json'),
-  account: path.join(base, 'account.json')
+  account: path.join(base, 'account.json'),
+  loginDiagnostic: path.join(base, 'logs', 'login.json')
 }
 
 const accounts = new AccountStore(files.account)
@@ -166,7 +167,7 @@ ipcMain.handle('pack:update', () => exclusive(() => installUpdate()))
 ipcMain.handle('pack:repair', () => exclusive(() => installUpdate({ repair: true })))
 
 ipcMain.handle('account:login', async () => {
-  const profile = await loginInteractive(accounts)
+  const profile = await loginInteractive(accounts, files.loginDiagnostic)
   return profile
 })
 
@@ -200,7 +201,7 @@ ipcMain.handle('game:launch', () => exclusive(async () => {
   progress({ phase: 'launch', text: '계정 확인 중...' })
   let authorization
   try {
-    authorization = await getLaunchAuthorization(accounts)
+    authorization = await getLaunchAuthorization(accounts, files.loginDiagnostic)
   } catch (e) {
     if (e.needsLogin) await accounts.clear()
     send('account', null)
