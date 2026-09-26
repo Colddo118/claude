@@ -197,14 +197,15 @@ button.tab:hover { color: var(--gold); box-shadow: inset 0 calc(var(--u) * -1) 0
 
 /*
  * 장식 테두리 = 가는 금선 + 네 모서리 매듭 (assets/frame-knot.png, 9-slice · 1픽셀 = --u)
+ * 모드팩 창 테두리 그림에서 픽셀 그대로 떠 온 것 (tools-art/make-frames.py)
  * 창 전체(.window-frame)와 패치노트 칸 · 설정 창에 겹쳐 그린다. 클릭은 통과.
  */
 .window-frame, .notes::after, dialog::after {
   content: "";
   position: absolute;
   pointer-events: none;
-  border: calc(var(--u) * 9) solid transparent;
-  border-image: url("assets/frame-knot.png") 9 / calc(var(--u) * 9) stretch;
+  border: calc(var(--u) * 12) solid transparent;
+  border-image: url("assets/frame-knot.png") 12 / calc(var(--u) * 12) stretch;
   image-rendering: pixelated;
   z-index: 2;
 }
@@ -301,6 +302,7 @@ button.win.close::before {
 .notes {
   position: relative;
   min-height: 0;
+  padding: calc(var(--u) * 5); /* 제목줄 · 목록은 테두리 선 안쪽에 */
   flex: 1; /* 패치노트 = 왼쪽 아래 끝까지 */
   display: flex;
   flex-direction: column;
@@ -312,7 +314,7 @@ button.win.close::before {
   align-items: center;
   justify-content: space-between;
   min-height: calc(var(--u) * 13);
-  padding: 0 calc(var(--u) * 10);
+  padding: 0 calc(var(--u) * 6);
   background: var(--head-bg);
 }
 .notes-head h2 { font-size: 20px; color: var(--gold); }
@@ -326,8 +328,7 @@ button.win.close::before {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 calc(var(--u) * 10) calc(var(--u) * 8);
-  margin: 0 calc(var(--u) * 3) calc(var(--u) * 3) 0; /* 스크롤 막대 · 글자가 테두리 선과 겹치지 않게 */
+  padding: 0 calc(var(--u) * 5) calc(var(--u) * 2) calc(var(--u) * 6);
   user-select: text;
 }
 .changelog::-webkit-scrollbar { width: calc(var(--u) * 2); }
@@ -363,7 +364,7 @@ dialog {
   font: 20px/1.35 var(--body);
   border: 0;
   width: calc(var(--u) * 200);
-  padding: calc(var(--u) * 9) calc(var(--u) * 11) calc(var(--u) * 10);
+  padding: calc(var(--u) * 11) calc(var(--u) * 12) calc(var(--u) * 11);
 }
 dialog::backdrop { background: var(--veil); }
 .settings-form { display: flex; flex-direction: column; gap: calc(var(--u) * 4); }
