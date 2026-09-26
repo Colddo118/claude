@@ -188,11 +188,12 @@ test('암호화: 같은 내용이면 같은 결과, 다른 키로는 못 품', (
 test('서버 키트 묶기: 윈도우(CRLF·BOM) 체크아웃에서도 shebang 이 남지 않는다', () => {
   const dir = fs.mkdtempSync(path.join(tmp, 'crlf-'))
   fs.writeFileSync(path.join(dir, 'lib.js'), '#!/usr/bin/env node\r\nmodule.exports = 42\r\n')
-  fs.writeFileSync(path.join(dir, 'entry.js'), '﻿#!/usr/bin/env node\r\n\'use strict\'\r\nexports.main = async () => { console.log(require(\'./lib\')) }\r\n')
+  fs.writeFileSync(path.join(dir, 'entry.js'), '﻿#!/usr/bin/env node\r\n\'use strict\'\r\nexports.main = async () => { process.stdout.write(String(require(\'./lib\'))) }\r\n')
   const out = path.join(dir, 'bundled.js')
   fs.writeFileSync(out, bundle(path.join(dir, 'entry.js')))
   assert.equal(fs.readFileSync(out, 'utf8').split('#!').length, 2) // 맨 앞 한 번만
-  const r = require('node:child_process').spawnSync(process.execPath, [out], { encoding: 'utf8' })
+  // 글자만 비교 (윈도우 터미널에서 테스트하면 숫자에 색 코드가 붙을 수 있음)
+  const r = require('node:child_process').spawnSync(process.execPath, [out], { encoding: 'utf8', env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } })
   assert.equal(r.status, 0, r.stderr)
   assert.equal(r.stdout.trim(), '42')
 })
