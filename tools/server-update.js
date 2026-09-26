@@ -5,7 +5,11 @@
 // 서버 폴더에 server-update.json 이 있어야 한다: { "repo": "아이디/modpack", "key": "...", "start": "run.bat" }
 //
 //   node server-update.js            업데이트만
+//   node server-update.js --check    바뀔 내용만 보여주기 (아무것도 안 바꿈)
 //   node server-update.js --start    업데이트 후 서버 실행 (서버시작.bat 이 이걸 부름)
+//
+// server-update.json 의 "keep": ["kubejs/data/rpg/telemetry.json"] 처럼 적은 파일은
+// 서버에 있으면 절대 덮어쓰지 않는다 (서버가 직접 기록하는 데이터용)
 //
 // - 모드는 관리자 인스턴스와 똑같이 맞추고, 설정/KubeJS 는 관리자가 바꿨을 때만 덮어쓴다
 //   (서버가 실행 중에 기록하는 데이터 보존)
@@ -47,7 +51,9 @@ function loaderInstalled (serverDir, loader) {
   return true
 }
 
-async function updateServer ({ serverDir, repo, key, log = () => {} }) {
+// keep: 서버에 이미 있으면 절대 덮어쓰지 않을 파일 (server-update.json 의 "keep", 서버가 직접 기록하는 데이터 등)
+// check: true 면 바뀔 내용만 계산하고 아무것도 바꾸지 않는다
+async function updateServer ({ serverDir, repo, key, keep = [], check = false, log = () => {} }) {
   const { manifest, url } = await fetchServerManifest(repo, key)
   const stateFile = path.join(serverDir, STATE_FILE)
   const state = await updater.loadState(stateFile)
@@ -59,17 +65,33 @@ async function updateServer ({ serverDir, repo, key, log = () => {} }) {
   const clientOnlyJars = listJars(serverDir).filter(p => !listed.has(p.toLowerCase()) && matchesAny(p.toLowerCase(), clientOnly))
   plan.removals.push(...clientOnlyJars.filter(p => !plan.removals.includes(p)))
 
+  // 보존 목록: 서버에 있으면 받지 않고, "설치된 것" 으로 기록해 둔다 (관리자가 바꿔도 서버 것을 유지)
+  const kept = []
+  plan.downloads = plan.downloads.filter(f => {
+    const local = path.join(serverDir, ...f.path.split('/'))
+    if (!matchesAny(f.path, keep) || !fs.existsSync(local)) return true
+    const st = fs.statSync(local)
+    plan.records[f.path] = { sha1: f.sha1, size: st.size, mtimeMs: st.mtimeMs }
+    kept.push(f.path)
+    return false
+  })
+  plan.removals = plan.removals.filter(p => !matchesAny(p, keep))
+  const neededBundles = new Set(plan.downloads.filter(f => f.bundle && !f.url).map(f => f.bundle))
+  plan.downloadBytes = plan.downloads.filter(f => !f.bundle || f.url).reduce((n, f) => n + f.size, 0) +
+    (manifest.bundles || []).filter(b => neededBundles.has(b.id)).reduce((n, b) => n + b.size, 0)
+
   const report = {
     fromVersion: state.installedVersion,
     toVersion: manifest.version,
     downloads: plan.downloads.map(f => f.path),
     removals: plan.removals,
     loader: manifest.loader,
+    kept,
     loaderMissing: false,
     backupDir: null
   }
 
-  if (plan.needsUpdate || plan.removals.length) {
+  if (!check && (plan.needsUpdate || plan.removals.length)) {
     report.backupDir = path.join(serverDir, '.update-backup', new Date().toISOString().replace(/[:.]/g, '-'))
     let lastPct = -1
     await updater.applyUpdate({
@@ -110,11 +132,21 @@ async function main () {
   if (!fs.existsSync(configPath)) throw new Error(`${CONFIG_FILE} 이 없습니다. 관리자에게 받은 서버 키트 파일을 서버 폴더에 넣으세요.`)
   const cfg = JSON.parse(await fsp.readFile(configPath, 'utf8'))
   const start = process.argv.includes('--start')
+  const check = process.argv.includes('--check')
 
-  console.log('서버 패치 확인 중...')
+  console.log(check ? '서버 패치 미리보기 (아무것도 바꾸지 않음)...' : '서버 패치 확인 중...')
   let updateFailed = false
   try {
-    const r = await updateServer({ serverDir, repo: cfg.repo, key: cfg.key, log: console.log })
+    const r = await updateServer({ serverDir, repo: cfg.repo, key: cfg.key, keep: cfg.keep || [], check, log: console.log })
+    if (check) {
+      console.log(`설치된 버전: ${r.fromVersion || '(없음)'} → 최신: v${r.toVersion}`)
+      for (const p of r.downloads) console.log(`  + 받을 파일: ${p}`)
+      for (const p of r.removals) console.log(`  - 지울 파일: ${p}`)
+      for (const p of r.kept) console.log(`  = 보존 (keep): ${p}`)
+      console.log(`합계: 받을 파일 ${r.downloads.length}개, 지울 파일 ${r.removals.length}개, 보존 ${r.kept.length}개`)
+      if (r.loaderMissing) console.log(`⚠ 이 서버에 ${r.loader.type} ${r.loader.version} 이 설치되어 있지 않습니다.`)
+      return process.exit(0)
+    }
     if (!r.downloads.length && !r.removals.length) {
       console.log(`✔ 최신 버전입니다 (v${r.toVersion})`)
     } else {

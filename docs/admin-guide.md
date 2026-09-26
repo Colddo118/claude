@@ -39,9 +39,15 @@ patch.bat 으로 내보냅니다. 서버 폴더를 직접 고치면 다음 패�
 
 1. Node.js LTS 설치: https://nodejs.org
 2. 내 컴의 `server-kit` 폴더 안 파일들을 **서버 폴더(run.bat 이 있는 곳)** 에 복사
-   (USB, 디스코드 나에게 보내기 등): `server-update.js`, `server-update.json`, `서버시작.bat`, `서버업데이트.bat`
+   (USB, 디스코드 나에게 보내기 등): `server-update.js`, `server-update.json`, `서버시작.bat`, `서버업데이트.bat`, `미리보기.bat`, `CLAUDE.md`
 3. 서버를 run.bat 이 아닌 방법으로 켜 왔다면 `server-update.json` 의 `"start"` 를 그 명령으로 바꿈
-4. 앞으로 서버는 **`서버시작.bat`** 으로 켭니다.
+4. **처음 적용 전에 `미리보기.bat`** 으로 바뀔 파일을 확인합니다. 서버가 직접 기록하는 데이터 파일
+   (예: `kubejs/data/rpg/telemetry.json`)이 "받을 파일" 에 있으면 `server-update.json` 의
+   `"keep"` 에 추가하세요. 그 파일은 서버에 있으면 절대 덮어쓰지 않습니다.
+5. 앞으로 서버는 **`서버시작.bat`** 으로 켭니다.
+
+서버 컴에 Claude Code 가 있다면 키트의 `CLAUDE.md` 가 서버 폴더에서 지켜야 할 규칙
+(서버 폴더의 모드·설정은 직접 고치지 않기, 월드 작업 전 백업, 키 비밀 유지 등)을 알려줍니다.
 
 서버 컴이 어느 네트워크에 있든 상관없습니다 (인터넷만 되면 GitHub 에서 받음).
 

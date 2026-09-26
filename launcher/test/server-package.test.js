@@ -126,6 +126,27 @@ test('서버 패키지: 암호화 배포와 서버 키트 원클릭 업데이트
   const u3 = await runKit(srv)
   assert.match(u3.out, /최신 버전입니다 \(v1\.0\.1\)/)
 
+  // 관리자가 telemetry 까지 바꿔서 배포해도, 서버의 keep 목록에 있으면 서버 것을 유지
+  const cfg = JSON.parse(read(srv, 'server-update.json'))
+  write(srv, 'server-update.json', JSON.stringify({ ...cfg, keep: ['kubejs/data/rpg/telemetry.json'] }))
+  write(src, 'kubejs/data/rpg/telemetry.json', '{"from":"admin v2"}')
+  write(src, 'config/create-common.toml', 'speed=2')
+  const r3 = await build({ source: src, out, version: '1.0.2', notes: '- 설정', serverKey: key })
+  publishLocally(r3)
+  // 미리보기는 아무것도 안 바꾼다
+  const chk = await runKit(srv, ['--check'])
+  assert.equal(chk.code, 0, chk.out)
+  assert.match(chk.out, /받을 파일: config\/create-common\.toml/)
+  assert.match(chk.out, /보존 \(keep\): kubejs\/data\/rpg\/telemetry\.json/)
+  assert.equal(read(srv, 'config/create-common.toml'), 'speed=1')
+  const u4 = await runKit(srv)
+  assert.equal(u4.code, 0, u4.out)
+  assert.equal(read(srv, 'config/create-common.toml'), 'speed=2')
+  assert.equal(read(srv, 'kubejs/data/rpg/telemetry.json'), '{"from":"live server"}')
+  // 키트를 다시 만들어도 서버에서 정한 keep 은 유지
+  makeKit({ out: srv, repo: 'me/modpack', key })
+  assert.deepEqual(JSON.parse(read(srv, 'server-update.json')).keep, ['kubejs/data/rpg/telemetry.json'])
+
   // 키가 틀리면 명확한 오류
   write(srv, 'server-update.json', JSON.stringify({ repo: 'me/modpack', key: secret.newKey() }))
   const bad = await runKit(srv)
