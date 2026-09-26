@@ -61,7 +61,7 @@ html { height: 100%; background: #0e0b08; }
  *   위 변 --hi · 아래 변 --lo (양 끝 1픽셀 빼고) · 좌우 세로변은 절반 위 --hi / 절반 아래 --lo · 네 꼭짓점은 비움
  *   속(1픽셀 안쪽)은 위 절반 --fa / 아래 절반 --fb
  */
-dialog, button:not(.tab) {
+dialog, button:not(.tab, .win) {
   background:
     linear-gradient(var(--hi), var(--hi)) var(--u) 0 / calc(100% - var(--u) * 2) var(--u) no-repeat,
     linear-gradient(var(--lo), var(--lo)) var(--u) 100% / calc(100% - var(--u) * 2) var(--u) no-repeat,
@@ -103,7 +103,7 @@ p { margin: 0; }
 .hidden { display: none !important; }
 
 /* ---------- 버튼 = split(hi, lo) + bevel(hi, edge) · 높이 16 ---------- */
-button:not(.tab) {
+button:not(.tab, .win) {
   --p-hi: var(--off-hi); --p-lo: var(--off-lo); --p-edge: var(--off-edge);
   --hi: var(--p-hi); --lo: var(--p-edge); --fa: var(--p-hi); --fb: var(--p-lo);
   font: 20px/1 var(--body);
@@ -115,12 +115,12 @@ button:not(.tab) {
   cursor: pointer;
   white-space: nowrap;
 }
-button:not(.tab):hover:not(:disabled) {
+button:not(.tab, .win):hover:not(:disabled) {
   --fa: color-mix(in srgb, var(--p-hi), #000 15.7%);
   --fb: color-mix(in srgb, var(--p-lo), #000 15.7%);
 }
 button:focus-visible { outline: var(--u) solid var(--gold); outline-offset: var(--u); }
-button:not(.tab):disabled {
+button:not(.tab, .win):disabled {
   --p-hi: var(--dis-hi); --p-lo: var(--dis-lo); --p-edge: var(--dis-edge);
   color: var(--dis-text);
   cursor: default;
@@ -183,7 +183,67 @@ button.tab:hover { color: var(--gold); box-shadow: inset 0 calc(var(--u) * -1) 0
 .who.signed-out { display: none; }
 
 /* ---------- 왼쪽 정보 ---------- */
-.topbar { grid-column: 1 / -1; }
+.topbar {
+  grid-column: 1 / -1;
+  /* 윗줄 = 창 제목줄: 창 위쪽 끝까지 덮어서 어디를 잡아도 창이 끌리게 */
+  margin: calc(var(--u) * -5) calc(var(--u) * -8) 0;
+  padding: calc(var(--u) * 5) calc(var(--u) * 50) 0 calc(var(--u) * 8);
+  -webkit-app-region: drag;
+}
+.topbar button, .winctl, dialog { -webkit-app-region: no-drag; }
+
+/* 창 버튼 (최소화 · 최대화 · 닫기) — 5x5 픽셀 아이콘, 1픽셀 = --u */
+.winctl { position: fixed; top: var(--u); right: var(--u); display: flex; z-index: 1; }
+button.win {
+  width: calc(var(--u) * 14);
+  height: calc(var(--u) * 10);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+button.win::before {
+  content: "";
+  width: var(--u); height: var(--u);
+  --p: currentColor;
+}
+button.win:hover { background: rgba(246, 239, 223, .12); }
+button.win.close:hover { background: var(--badge); color: #fff; }
+button.win.min::before {
+  box-shadow:
+    calc(var(--u) * -2) calc(var(--u) * 2) var(--p), calc(var(--u) * -1) calc(var(--u) * 2) var(--p), 0 calc(var(--u) * 2) var(--p),
+    var(--u) calc(var(--u) * 2) var(--p), calc(var(--u) * 2) calc(var(--u) * 2) var(--p);
+}
+button.win.max::before {
+  box-shadow:
+    calc(var(--u) * -2) calc(var(--u) * -2) var(--p), calc(var(--u) * -1) calc(var(--u) * -2) var(--p), 0 calc(var(--u) * -2) var(--p), var(--u) calc(var(--u) * -2) var(--p), calc(var(--u) * 2) calc(var(--u) * -2) var(--p),
+    calc(var(--u) * -2) calc(var(--u) * -1) var(--p), calc(var(--u) * -1) calc(var(--u) * -1) var(--p), 0 calc(var(--u) * -1) var(--p), var(--u) calc(var(--u) * -1) var(--p), calc(var(--u) * 2) calc(var(--u) * -1) var(--p),
+    calc(var(--u) * -2) 0 var(--p), calc(var(--u) * 2) 0 var(--p),
+    calc(var(--u) * -2) var(--u) var(--p), calc(var(--u) * 2) var(--u) var(--p),
+    calc(var(--u) * -2) calc(var(--u) * 2) var(--p), calc(var(--u) * -1) calc(var(--u) * 2) var(--p), 0 calc(var(--u) * 2) var(--p), var(--u) calc(var(--u) * 2) var(--p), calc(var(--u) * 2) calc(var(--u) * 2) var(--p);
+}
+/* 최대화 상태 = 겹친 작은 창 두 개 */
+body.maximized button.win.max::before {
+  box-shadow:
+    calc(var(--u) * -1) calc(var(--u) * -2) var(--p), 0 calc(var(--u) * -2) var(--p), var(--u) calc(var(--u) * -2) var(--p), calc(var(--u) * 2) calc(var(--u) * -2) var(--p),
+    calc(var(--u) * 2) calc(var(--u) * -1) var(--p), calc(var(--u) * 2) 0 var(--p),
+    calc(var(--u) * -2) calc(var(--u) * -1) var(--p), calc(var(--u) * -1) calc(var(--u) * -1) var(--p), 0 calc(var(--u) * -1) var(--p), var(--u) calc(var(--u) * -1) var(--p),
+    calc(var(--u) * -2) 0 var(--p), var(--u) 0 var(--p),
+    calc(var(--u) * -2) var(--u) var(--p), var(--u) var(--u) var(--p),
+    calc(var(--u) * -2) calc(var(--u) * 2) var(--p), calc(var(--u) * -1) calc(var(--u) * 2) var(--p), 0 calc(var(--u) * 2) var(--p), var(--u) calc(var(--u) * 2) var(--p);
+}
+button.win.close::before {
+  box-shadow:
+    calc(var(--u) * -2) calc(var(--u) * -2) var(--p), calc(var(--u) * 2) calc(var(--u) * -2) var(--p),
+    calc(var(--u) * -1) calc(var(--u) * -1) var(--p), var(--u) calc(var(--u) * -1) var(--p),
+    0 0 var(--p),
+    calc(var(--u) * -1) var(--u) var(--p), var(--u) var(--u) var(--p),
+    calc(var(--u) * -2) calc(var(--u) * 2) var(--p), calc(var(--u) * 2) calc(var(--u) * 2) var(--p);
+}
 .hero {
   grid-column: 1;
   grid-row: 2 / 4;

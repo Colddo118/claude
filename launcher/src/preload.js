@@ -20,5 +20,7 @@ contextBridge.exposeInMainWorld('launcher', {
   open: what => ipcRenderer.invoke('shell:open', what),
   onProgress: cb => subscribe('progress', cb),
   onGameExit: cb => subscribe('game:exit', cb),
-  onAccount: cb => subscribe('account', cb)
+  onAccount: cb => subscribe('account', cb),
+  windowControl: action => ipcRenderer.invoke('window:control', action),
+  onWindowState: cb => subscribe('window:state', cb)
 })

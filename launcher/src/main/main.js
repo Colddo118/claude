@@ -251,6 +251,13 @@ ipcMain.handle('game:launch', () => exclusive(async () => {
 
 // ---------------------------------------------------------------- window
 
+ipcMain.handle('window:control', (_e, action) => {
+  if (!win || win.isDestroyed()) return
+  if (action === 'minimize') win.minimize()
+  else if (action === 'maximize') win.isMaximized() ? win.unmaximize() : win.maximize()
+  else if (action === 'close') win.close()
+})
+
 function createWindow () {
   win = new BrowserWindow({
     width: 1200,
@@ -258,7 +265,9 @@ function createWindow () {
     minWidth: 1000,
     minHeight: 640,
     title: config.appName,
-    backgroundColor: '#11131a',
+    // 윈도우 기본 제목줄 대신 런처 윗줄이 제목줄 역할 (끌어서 옮기기 · 최소화/최대화/닫기 버튼은 화면에서 그림)
+    frame: false,
+    backgroundColor: '#0e0b08',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
@@ -268,6 +277,9 @@ function createWindow () {
     }
   })
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
+  const sendState = () => send('window:state', { maximized: win.isMaximized() })
+  win.on('maximize', sendState)
+  win.on('unmaximize', sendState)
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 }
 

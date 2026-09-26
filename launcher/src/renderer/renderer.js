@@ -325,6 +325,13 @@ $('repair-btn').addEventListener('click', async () => {
 // ---------------------------------------------------------------- boot
 
 ui.play.addEventListener('click', play)
+$('win-min').addEventListener('click', () => api.windowControl('minimize'))
+$('win-max').addEventListener('click', () => api.windowControl('maximize'))
+$('win-close').addEventListener('click', () => api.windowControl('close'))
+api.onWindowState(s => {
+  document.body.classList.toggle('maximized', s.maximized)
+  $('win-max').title = s.maximized ? '이전 크기로' : '최대화'
+})
 // 창에서 Enter = 메인 버튼 (설정 창이 열려 있거나 입력 칸에 있을 때는 제외)
 document.addEventListener('keydown', e => {
   if (e.key !== 'Enter' || dialog.open || e.target.closest('input, button, textarea')) return
