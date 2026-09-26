@@ -41,8 +41,11 @@ test('매니페스트 검증은 위험한 경로를 거부한다', () => {
 })
 
 test('서버 자동 접속 인자', () => {
-  assert.deepEqual(serverArgs({ minecraft: '1.21.1', server: { address: 'play.x.com' } }),
-    { quickPlayMultiplayer: 'play.x.com:25565' })
+  // 포트가 없으면 주소만 (SRV 레코드 사용 가능)
+  assert.deepEqual(serverArgs({ minecraft: '1.21.1', server: { address: 'kubejsrpg.p-e.kr' } }),
+    { quickPlayMultiplayer: 'kubejsrpg.p-e.kr' })
+  assert.deepEqual(serverArgs({ minecraft: '1.21.1', server: { address: 'play.x.com', port: 25570 } }),
+    { quickPlayMultiplayer: 'play.x.com:25570' })
   assert.deepEqual(serverArgs({ minecraft: '1.12.2', server: { address: 'play.x.com', port: 25570 } }),
     { server: { ip: 'play.x.com', port: 25570 } })
   assert.deepEqual(serverArgs({ minecraft: '1.21.1' }), {})

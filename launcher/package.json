@@ -1,8 +1,8 @@
 {
   "name": "modpack-launcher",
-  "productName": "ModpackLauncher",
+  "productName": "KubejsRPG",
   "version": "0.1.0",
-  "description": "모드팩 자동 업데이트 런처",
+  "description": "KubejsRPG 모드팩 런처",
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
@@ -23,7 +23,7 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.example.modpacklauncher",
+    "appId": "kr.p-e.kubejsrpg.launcher",
     "files": [
       "src/**/*",
       "launcher.config.json",
@@ -35,7 +35,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "shortcutName": "KubejsRPG"
     },
     "mac": {
       "category": "public.app-category.games"

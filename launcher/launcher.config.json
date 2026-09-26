@@ -1,6 +1,6 @@
 {
-  "appName": "우리 서버 런처",
-  "dataFolderName": "our-server-launcher",
+  "appName": "KubejsRPG",
+  "dataFolderName": "kubejsrpg-launcher",
   "manifestUrl": "https://github.com/colddo118/modpack/releases/latest/download/manifest.json",
   "discordUrl": "",
   "websiteUrl": ""

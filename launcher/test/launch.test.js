@@ -126,7 +126,7 @@ test('NeoForge 1.21.1 실행 인자', async () => {
   assert.equal(after1(args, '--userType'), 'msa')
   assert.equal(after1(args, '--gameDir'), path.join(tmp, 'instance'))
   assert.equal(after1(args, '--fml.neoForgeVersion'), '21.1.77')
-  assert.equal(after1(args, '--quickPlayMultiplayer'), 'play.example.com:25565')
+  assert.equal(after1(args, '--quickPlayMultiplayer'), 'play.example.com')
   assert.ok(!args.includes('--demo'))
   // 치환 안 된 ${...} 가 남으면 안 된다
   assert.deepEqual(args.filter(a => a.includes('${')), [])

@@ -186,12 +186,13 @@ async function ensureLoader (manifest, mc, javaPath, { onStatus, onProgress, for
 function serverArgs (manifest) {
   const s = manifest.server
   if (!s || !s.address) return {}
-  const port = Number(s.port) || 25565
+  // 포트를 적지 않았으면 주소만 넘긴다. 포트를 붙이면 마인크래프트가 SRV 레코드(도메인에 연결된 포트)를 확인하지 않는다.
+  const port = Number(s.port) || undefined
   // 1.20 부터는 --server 대신 Quick Play 를 써야 바로 접속된다.
   if (compareVersions(manifest.minecraft, '1.20') >= 0) {
-    return { quickPlayMultiplayer: `${s.address}:${port}` }
+    return { quickPlayMultiplayer: port ? `${s.address}:${port}` : s.address }
   }
-  return { server: { ip: s.address, port } }
+  return { server: port ? { ip: s.address, port } : { ip: s.address } }
 }
 
 function jvmArgs (settings) {
