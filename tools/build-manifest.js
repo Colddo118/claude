@@ -36,6 +36,8 @@ const DEFAULT_CONFIG = {
   ],
   // 숨김 폴더(예: mods/.connector 같은 모드 캐시)는 게임이 알아서 다시 만드는 캐시라 배포하지 않는다.
   exclude: ['**/*.disabled', '**/*.bak', '**/.DS_Store', '**/Thumbs.db', '**/.*/**'],
+  // 서버에서만 쓰는 파일: 배포하지 않는다 (제작물 보호). 레시피 등 결과는 접속 시 서버가 클라이언트로 보내준다.
+  serverOnly: ['kubejs/server_scripts', 'kubejs/data'],
   // 처음 설치할 때만 넣고 이후엔 사용자가 바꾼 값을 유지할 파일들
   once: [
     'options.txt', 'servers.dat',
@@ -199,7 +201,7 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   const userConfig = await readJsonIfExists(configPath ? path.resolve(configPath) : path.join(sourceDir, 'pack.config.json')) || {}
   // exclude / once 는 기본값에 더한다 (기본 목록을 매번 다시 적지 않아도 되게)
   const merged = key => [...DEFAULT_CONFIG[key], ...(userConfig[key] || [])]
-  const config = { ...DEFAULT_CONFIG, ...userConfig, exclude: merged('exclude'), once: merged('once') }
+  const config = { ...DEFAULT_CONFIG, ...userConfig, exclude: merged('exclude'), once: merged('once'), serverOnly: merged('serverOnly') }
   const repo = githubArg || config.github
   const mode = repo ? 'github' : 'objects'
 
@@ -215,9 +217,10 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     throw new Error(`이미 ${version} 버전이 빌드되어 있습니다. 버전을 올리거나 --force 를 쓰세요.`)
   }
 
-  const candidates = (await walk(sourceDir))
+  const included = (await walk(sourceDir))
     .filter(p => matchesAny(p, config.include) && !matchesAny(p, config.exclude))
-    .sort()
+  const serverOnlyFiles = included.filter(p => matchesAny(p, config.serverOnly))
+  const candidates = included.filter(p => !matchesAny(p, config.serverOnly)).sort()
   const cdnMap = flags['no-cdn'] || config.useCurseForgeCdn === false ? new Map() : await readCurseForgeFiles(sourceDir)
 
   const files = []
@@ -322,6 +325,7 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     manifestFile,
     cdnCount: files.length - selfHosted.length,
     cdnFailed,
+    serverOnlyCount: serverOnlyFiles.length,
     selfHostedBytes: selfHosted.reduce((n, f) => n + f.size, 0),
     totalBytes: files.reduce((n, f) => n + f.size, 0)
   }
@@ -340,6 +344,7 @@ async function main () {
   const { manifest } = r
   console.log(`✔ ${manifest.packName} v${manifest.version} (MC ${manifest.minecraft}, ${manifest.loader.type} ${manifest.loader.version || ''})`)
   console.log(`  파일 ${manifest.files.length}개 (총 ${mb(r.totalBytes)})`)
+  console.log(`  - 서버 전용이라 배포에서 뺀 파일: ${r.serverOnlyCount}개 (${[...new Set(DEFAULT_CONFIG.serverOnly)].join(', ')} 등)`)
   console.log(`  - 커스포지 CDN 에서 받음: ${r.cdnCount}개`)
   console.log(`  - 직접 올릴 파일: ${manifest.files.length - r.cdnCount}개 (${mb(r.selfHostedBytes)})`)
   console.log('  폴더별 크기:')
