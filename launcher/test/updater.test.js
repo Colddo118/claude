@@ -134,12 +134,34 @@ test('설치 → 업데이트 → 사용자 파일 보존까지 전체 흐름', 
   assert.equal(read(path.join(instance, '.launcher-backup', backups[0]), 'mods/my-own-mod.jar'), 'user mod')
   assert.equal((await updater.loadState(stateFile)).installedVersion, '1.1.0')
 
-  // 유저가 관리 대상 파일을 망가뜨리면 다음 확인 때 복구된다
-  write(instance, 'config/create-common.toml', 'speed=999!')
+  // 모드 jar 가 망가지면 다음 확인 때 복구된다 (overwrite)
+  write(instance, 'mods/jei.jar', 'broken!')
   const repair = await sync(instance, stateFile)
   assert.equal(repair.versionChanged, false)
-  assert.deepEqual(repair.downloads.map(f => f.path), ['config/create-common.toml'])
-  assert.equal(read(instance, 'config/create-common.toml'), 'speed=2')
+  assert.deepEqual(repair.downloads.map(f => f.path), ['mods/jei.jar'])
+  assert.equal(read(instance, 'mods/jei.jar'), 'jei-v2')
+
+  // 게임(모드)이 실행 중에 config 를 고쳐 써도 서버 쪽이 그대로면 건드리지 않는다 (update)
+  assert.equal(manifest.files.find(f => f.path === 'config/create-common.toml').mode, 'update')
+  write(instance, 'config/create-common.toml', 'speed=2\n# rewritten by mod')
+  const quiet = await sync(instance, stateFile)
+  assert.equal(quiet.needsUpdate, false)
+  assert.equal(read(instance, 'config/create-common.toml'), 'speed=2\n# rewritten by mod')
+
+  // 관리자가 서버 쪽 config 를 바꾸면 그때는 덮어쓴다
+  write(src, 'config/create-common.toml', 'speed=3')
+  await build({ source: src, out, version: '1.2.0', notes: '- 속도 조정' })
+  const serverChanged = await sync(instance, stateFile)
+  assert.deepEqual(serverChanged.downloads.map(f => f.path), ['config/create-common.toml'])
+  assert.equal(read(instance, 'config/create-common.toml'), 'speed=3')
+
+  // 복구 모드(저장된 기록 무시)에서는 config 도 서버 내용으로 되돌린다
+  write(instance, 'config/create-common.toml', 'user edit')
+  const st = await updater.loadState(stateFile)
+  const repairState = { ...st, files: Object.fromEntries(Object.keys(st.files).map(k => [k, {}])) }
+  const m3 = await updater.fetchManifest(baseUrl)
+  const repairPlan = await updater.planUpdate({ manifest: m3, instanceDir: instance, state: repairState })
+  assert.deepEqual(repairPlan.downloads.map(f => f.path), ['config/create-common.toml'])
 })
 
 test('서버 파일이 손상되면 체크섬 오류로 거부한다', async () => {
@@ -177,4 +199,17 @@ test('커스포지 NeoForge 인스턴스 감지', async () => {
     write(dir, 'minecraftinstance.json', JSON.stringify({ gameVersion: '1.21.1', baseModLoader: { name } }))
     assert.deepEqual(await detectFromCurseForge(dir), { minecraft: '1.21.1', loader: { type: 'neoforge', version: '21.1.77' } })
   }
+})
+
+test('pack.config.json 의 exclude 는 기본 제외 목록에 더해진다', async () => {
+  const src = path.join(tmp, 'exclude-src')
+  write(src, 'minecraftinstance.json', JSON.stringify({ gameVersion: '1.21.1', baseModLoader: { name: 'neoforge-21.1.77' } }))
+  write(src, 'pack.config.json', JSON.stringify({ exclude: ['kubejs/dev'] }))
+  write(src, 'mods/a.jar', 'a')
+  write(src, 'mods/a.jar.bak', 'backup')
+  write(src, 'kubejs/startup_scripts/main.js', 'x')
+  write(src, 'kubejs/dev/vfx_ref/huge.psd', 'big')
+  write(src, 'mods/b.jar.disabled', 'off')
+  const r = await build({ source: src, out: path.join(tmp, 'exclude-out'), version: '1.0.0' })
+  assert.deepEqual(r.manifest.files.map(f => f.path), ['kubejs/startup_scripts/main.js', 'mods/a.jar'])
 })

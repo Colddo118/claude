@@ -83,6 +83,7 @@ function toLocal (instanceDir, relPath) {
 /**
  * 무엇을 받고/지우고/옮길지 계산만 한다 (디스크는 바꾸지 않음).
  * - overwrite 파일: 없거나 해시가 다르면 다운로드
+ * - update 파일: 없거나, 관리자가 서버 쪽 내용을 바꿨을 때만 다운로드
  * - once 파일: 없을 때만 다운로드 (이후엔 사용자 소유)
  * - 예전에 런처가 설치했지만 매니페스트에서 빠진 파일: 삭제
  * - strictDirs(기본 mods) 안의 매니페스트에 없는 파일: 백업 폴더로 이동
@@ -99,12 +100,22 @@ async function planUpdate ({ manifest, instanceDir, state, onProgress }) {
     const st = await statOrNull(local)
     const mode = f.mode || 'overwrite'
 
+    const rec = state.files[f.path]
     if (mode === 'once') {
       if (!st) downloads.push(f)
+    } else if (mode === 'update') {
+      if (!st) {
+        downloads.push(f)
+      } else if (rec && rec.sha1 === f.sha1) {
+        records[f.path] = rec // 서버 쪽은 그대로 → 게임이나 유저가 바꾼 내용 유지
+      } else if (st.size === f.size && await sha1File(local) === f.sha1) {
+        records[f.path] = { sha1: f.sha1, size: st.size, mtimeMs: st.mtimeMs }
+      } else {
+        downloads.push(f) // 관리자가 서버 쪽 파일을 바꿈 (또는 복구 모드)
+      }
     } else if (!st || !st.isFile() || st.size !== f.size) {
       downloads.push(f)
     } else {
-      const rec = state.files[f.path]
       const unchanged = rec && rec.sha1 === f.sha1 && rec.size === st.size && rec.mtimeMs === st.mtimeMs
       if (unchanged || await sha1File(local) === f.sha1) {
         records[f.path] = { sha1: f.sha1, size: st.size, mtimeMs: st.mtimeMs }
@@ -291,7 +302,7 @@ async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, sta
   }
   const record = async (f, dest) => {
     doneFiles++
-    if ((f.mode || 'overwrite') === 'overwrite') {
+    if (f.mode !== 'once') {
       const st = await fsp.stat(dest)
       files[f.path] = { sha1: f.sha1, size: st.size, mtimeMs: st.mtimeMs }
     }

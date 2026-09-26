@@ -3,7 +3,10 @@
 // 서버(tools/build-manifest.js)와 런처가 함께 쓰는 매니페스트 규칙.
 
 const FORMAT_VERSION = 1
-const FILE_MODES = ['overwrite', 'once']
+// overwrite: 항상 서버와 똑같이 (모드 jar 등)
+// update:    관리자가 서버 쪽 파일을 바꿨을 때만 덮어씀. 게임/유저가 로컬에서 바꾼 건 유지 (config 등)
+// once:      처음 한 번만 넣고 이후엔 유저 소유 (options.txt 등)
+const FILE_MODES = ['overwrite', 'update', 'once']
 const LOADER_TYPES = ['vanilla', 'forge', 'neoforge', 'fabric', 'quilt']
 
 function hasGlobChars (pattern) {

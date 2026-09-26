@@ -34,9 +34,11 @@ const DEFAULT_CONFIG = {
     'resourcepacks', 'shaderpacks', 'options.txt', 'servers.dat'
   ],
   // 숨김 폴더(예: mods/.connector 같은 모드 캐시)는 게임이 알아서 다시 만드는 캐시라 배포하지 않는다.
-  exclude: ['**/*.disabled', '**/.DS_Store', '**/Thumbs.db', 'config/**/*.bak', '**/.*/**'],
+  exclude: ['**/*.disabled', '**/*.bak', '**/.DS_Store', '**/Thumbs.db', '**/.*/**'],
   // 처음 설치할 때만 넣고 이후엔 사용자가 바꾼 값을 유지할 파일들
   once: ['options.txt', 'servers.dat'],
+  // 모드가 실행 중에 스스로 고쳐 쓰는 설정 파일들: 관리자가 바꿨을 때만 덮어쓴다
+  update: ['config'],
   // 이 폴더 안에서 매니페스트에 없는 파일은 백업 폴더로 치운다 (서버와 모드 불일치 방지)
   strictDirs: ['mods'],
   changelogLimit: 30
@@ -134,7 +136,8 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   const sourceDir = path.resolve(source)
   const outDir = path.resolve(out)
   const userConfig = await readJsonIfExists(configPath ? path.resolve(configPath) : path.join(sourceDir, 'pack.config.json')) || {}
-  const config = { ...DEFAULT_CONFIG, ...userConfig }
+  // exclude 는 기본값에 더한다 (기본 제외 목록을 매번 다시 적지 않아도 되게)
+  const config = { ...DEFAULT_CONFIG, ...userConfig, exclude: [...DEFAULT_CONFIG.exclude, ...(userConfig.exclude || [])] }
   const repo = githubArg || config.github
   // bundleUrl: GitHub 이외의 곳에 zip 을 올릴 때 쓰는 주소 틀 (예: https://example.com/pack-{version}.zip)
   const bundleUrl = repo ? github.bundleUrl(repo, version) : config.bundleUrl && config.bundleUrl.replace(/\{version\}/g, version)
@@ -163,6 +166,7 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     const abs = path.join(sourceDir, ...rel.split('/'))
     const entry = { path: rel, sha1: await sha1File(abs), size: (await fsp.stat(abs)).size }
     if (matchesAny(rel, config.once)) entry.mode = 'once'
+    else if (matchesAny(rel, config.update)) entry.mode = 'update'
     const url = cdnUrlFor(cdnMap, rel)
     if (url) entry.url = url
     files.push(entry)

@@ -37,7 +37,8 @@
 
 | 파일 종류 | 동작 |
 | --- | --- |
-| 매니페스트에 있는 파일 (mods, config, kubejs …) | 서버와 다르면 덮어씀 → 항상 서버와 동일 |
+| 모드·kubejs·리소스팩 등 | 서버와 다르면 덮어씀 → 항상 서버와 동일 |
+| `config` 파일 (`update`) | **관리자가 서버 쪽에서 바꿨을 때만** 덮어씀. 모드가 실행 중에 고쳐 쓰거나 유저가 게임 안 설정 메뉴로 바꾼 건 유지 |
 | `once` 파일 (기본: `options.txt`, `servers.dat`) | 처음 설치 때만 넣고 이후엔 **유저가 바꾼 값 유지** |
 | 예전 버전에 있었는데 새 버전에서 빠진 파일 | 삭제 |
 | `strictDirs`(기본: `mods`) 안에 유저가 직접 넣은 파일 | 서버와 모드 불일치 방지를 위해 `.launcher-backup/` 으로 **이동** (삭제 아님) |
@@ -125,8 +126,9 @@
 | `useCurseForgeCdn` | `true` | `false` 면 모드도 직접 올림 |
 | `bundleUrl` | 없음 | GitHub 외 다른 곳에 zip 을 올릴 때 주소 틀. 예: `https://example.com/pack-{version}.zip` |
 | `include` | mods, config, defaultconfigs, kubejs, scripts, resourcepacks, shaderpacks, options.txt, servers.dat | 배포할 파일/폴더 (글롭 `*`, `**` 사용 가능) |
-| `exclude` | `**/*.disabled` 등 | 제외할 파일 |
+| `exclude` | `**/*.disabled`, `**/*.bak`, 숨김 폴더 등 | 제외할 파일. 적은 항목은 기본값에 **더해짐**. 예: `["kubejs/dev"]` |
 | `once` | options.txt, servers.dat | 처음 설치 때만 넣는 파일 |
+| `update` | `["config"]` | 관리자가 바꿨을 때만 덮어쓰는 파일 |
 | `strictDirs` | `["mods"]` | 목록에 없는 파일을 백업 폴더로 치울 폴더 |
 | `server` | 없음 | `{ "address": "play.example.com", "port": 25565 }` → 게임 시작 시 자동 접속 |
 | `memory` | 없음 | `{ "recommendedMB": 6144 }` → 유저 기본 램 할당 (PC 램 - 2GB 를 넘지 않음) |
