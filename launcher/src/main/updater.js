@@ -213,57 +213,24 @@ async function pruneEmptyDirs (instanceDir, relPaths) {
   }
 }
 
-function openZip (file) {
-  const yauzl = require('yauzl')
-  return new Promise((resolve, reject) => {
-    yauzl.open(file, { lazyEntries: true, autoClose: false }, (err, zip) => err ? reject(err) : resolve(zip))
-  })
-}
-
-// zip 에서 wanted(경로 → 파일 정보) 에 있는 항목만 꺼내고, 각각 해시를 검증한 뒤 제자리에 둔다.
-async function extractFromBundle (zipFile, wanted, instanceDir, onFile) {
-  const zip = await openZip(zipFile)
-  const remaining = new Map(wanted.map(f => [f.path, f]))
-  try {
-    await new Promise((resolve, reject) => {
-      zip.on('error', reject)
-      zip.on('end', resolve)
-      zip.on('entry', entry => {
-        const f = remaining.get(entry.fileName)
-        if (!f) return zip.readEntry()
-        zip.openReadStream(entry, async (err, stream) => {
-          if (err) return reject(err)
-          const dest = toLocal(instanceDir, f.path)
-          const tmp = dest + '.part'
-          try {
-            await fsp.mkdir(path.dirname(dest), { recursive: true })
-            const hash = crypto.createHash('sha1')
-            let size = 0
-            const tap = new Transform({
-              transform (chunk, _enc, cb) {
-                hash.update(chunk)
-                size += chunk.length
-                cb(null, chunk)
-              }
-            })
-            await pipeline(stream, tap, fs.createWriteStream(tmp))
-            if (hash.digest('hex') !== f.sha1 || size !== f.size) throw new Error(`${f.path}: 묶음 안의 파일이 매니페스트와 다릅니다`)
-            await fsp.rename(tmp, dest)
-            remaining.delete(f.path)
-            await onFile(f, dest)
-            zip.readEntry()
-          } catch (e) {
-            await fsp.rm(tmp, { force: true })
-            reject(e)
-          }
-        })
-      })
-      zip.readEntry()
-    })
-  } finally {
-    zip.close()
+// 묶음(zip)에서 wanted 에 있는 항목만 꺼내고, 각각 해시를 검증한 뒤 제자리에 둔다.
+async function extractFromBundle (zipBuf, wanted, instanceDir, onFile) {
+  const { readZipEntries, readZipEntry } = require('../common/zip')
+  const entries = new Map(readZipEntries(zipBuf).map(e => [e.name, e]))
+  for (const f of wanted) {
+    const entry = entries.get(f.path)
+    if (!entry) throw new Error(`묶음에 없는 파일: ${f.path}`)
+    const data = readZipEntry(zipBuf, entry)
+    if (data.length !== f.size || crypto.createHash('sha1').update(data).digest('hex') !== f.sha1) {
+      throw new Error(`${f.path}: 묶음 안의 파일이 매니페스트와 다릅니다`)
+    }
+    const dest = toLocal(instanceDir, f.path)
+    const tmp = dest + '.part'
+    await fsp.mkdir(path.dirname(dest), { recursive: true })
+    await fsp.writeFile(tmp, data)
+    await fsp.rename(tmp, dest)
+    await onFile(f, dest)
   }
-  if (remaining.size) throw new Error(`묶음에 없는 파일: ${[...remaining.keys()].slice(0, 3).join(', ')}`)
 }
 
 async function runPool (items, concurrency, worker) {
@@ -287,7 +254,8 @@ async function runPool (items, concurrency, worker) {
  * planUpdate 결과를 실제로 적용한다. 중간에 실패해도 받은 파일은 state 에
  * 기록되므로 다음 시도에서 이어 받는다.
  */
-async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, state, plan, onProgress, signal, concurrency = 6 }) {
+// decrypt: 암호화된 묶음(bundle.enc)을 푸는 함수 (서버용). backupDir: 덮어쓰거나 지우는 파일을 먼저 복사해 둘 곳 (서버용).
+async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, state, plan, onProgress, signal, concurrency = 6, decrypt, backupDir }) {
   const files = { ...plan.records }
   const report = p => onProgress && onProgress(p)
 
@@ -299,6 +267,16 @@ async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, sta
       await fsp.rename(toLocal(instanceDir, p), dest)
     }
     report({ phase: 'cleanup', text: `목록에 없는 파일 ${plan.strays.length}개를 .launcher-backup 으로 옮김` })
+  }
+
+  if (backupDir) {
+    for (const p of [...plan.removals, ...plan.downloads.map(f => f.path)]) {
+      const src = toLocal(instanceDir, p)
+      if (!fs.existsSync(src)) continue
+      const dest = toLocal(backupDir, p)
+      await fsp.mkdir(path.dirname(dest), { recursive: true })
+      await fsp.copyFile(src, dest)
+    }
   }
 
   for (const p of plan.removals) {
@@ -334,7 +312,12 @@ async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, sta
       const zipFile = path.join(instanceDir, '.launcher-tmp', `bundle-${b.sha1}.zip`)
       await downloadVerified({ url: new URL(b.url, manifestUrl).toString(), dest: zipFile, sha1: b.sha1, size: b.size, signal, onBytes })
       try {
-        await extractFromBundle(zipFile, bundled.filter(f => f.bundle === b.id), instanceDir, record)
+        let zipBuf = await fsp.readFile(zipFile)
+        if (b.enc) {
+          if (!decrypt) throw new Error(`암호화된 묶음 ${b.id} 을 풀 키가 없습니다`)
+          zipBuf = decrypt(zipBuf)
+        }
+        await extractFromBundle(zipBuf, bundled.filter(f => f.bundle === b.id), instanceDir, record)
       } finally {
         await fsp.rm(path.dirname(zipFile), { recursive: true, force: true })
       }

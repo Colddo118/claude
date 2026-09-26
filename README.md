@@ -6,6 +6,11 @@
 
 ![런처 화면](docs/screenshot.png)
 
+> **바로가기**
+> - 패치 배포하는 법 (관리자): [docs/admin-guide.md](docs/admin-guide.md) — 평소엔 `patch.bat` 더블클릭
+> - 친구들에게 보낼 설치 안내: [docs/player-guide.md](docs/player-guide.md)
+> - 런처 화면 디자인 수정 규칙: [docs/launcher-ui.md](docs/launcher-ui.md)
+
 ## 무엇이 달라지나
 
 | 지금 | 런처 사용 시 |

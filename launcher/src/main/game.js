@@ -42,8 +42,9 @@ function runTask (task, onProgress) {
 
 // ---------------------------------------------------------------- Java
 
-function findJavaExecutable (dir) {
-  const exe = process.platform === 'win32' ? 'javaw.exe' : 'java'
+// consoleExe: 서버처럼 콘솔 창에서 돌릴 때는 javaw.exe 대신 java.exe
+function findJavaExecutable (dir, consoleExe = false) {
+  const exe = process.platform === 'win32' ? (consoleExe ? 'java.exe' : 'javaw.exe') : 'java'
   const stack = [dir]
   while (stack.length) {
     const cur = stack.pop()
@@ -75,10 +76,10 @@ async function extractArchive (archive, destDir) {
 }
 
 // Eclipse Temurin(Adoptium) JRE 를 런처 폴더 안에 받아 둔다. 사용자 PC 에 자바가 없어도 된다.
-async function ensureJava (major, runtimeDir, onStatus) {
+async function ensureJava (major, runtimeDir, onStatus, { consoleExe = false } = {}) {
   const target = path.join(runtimeDir, `java-${major}`)
   if (exists(target)) {
-    const found = findJavaExecutable(target)
+    const found = findJavaExecutable(target, consoleExe)
     if (found) return found
   }
   const osName = { win32: 'windows', darwin: 'mac', linux: 'linux' }[process.platform]
@@ -99,7 +100,7 @@ async function ensureJava (major, runtimeDir, onStatus) {
   await fsp.rename(staging, target)
   await fsp.rm(archive, { force: true })
 
-  const found = findJavaExecutable(target)
+  const found = findJavaExecutable(target, consoleExe)
   if (!found) throw new Error('자바 설치 후 실행 파일을 찾지 못했습니다')
   if (process.platform !== 'win32') await fsp.chmod(found, 0o755)
   return found

@@ -16,9 +16,11 @@ const fsp = fs.promises
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { pipeline } = require('node:stream/promises')
-const { writeZip } = require('./lib/zip')
+const { writeZip } = require('../launcher/src/common/zip')
 const { readCurseForgeFiles, cdnUrlFor, checkUrl } = require('./lib/curseforge')
 const { groupFiles } = require('./lib/grouping')
+const { SERVER_DIRS, clientOnlyPatterns } = require('./lib/server-files')
+const secret = require('../launcher/src/common/secret')
 const github = require('./lib/github')
 const {
   FORMAT_VERSION,
@@ -38,6 +40,8 @@ const DEFAULT_CONFIG = {
   exclude: ['**/*.disabled', '**/*.bak', '**/.DS_Store', '**/Thumbs.db', '**/.*/**'],
   // 서버에서만 쓰는 파일: 배포하지 않는다 (제작물 보호). 레시피 등 결과는 접속 시 서버가 클라이언트로 보내준다.
   serverOnly: ['kubejs/server_scripts', 'kubejs/data'],
+  // 서버가 게임 중에 기록하는 데이터 파일: 친구들에게도, 서버에도 배포하지 않는다 (관리자 테스트 데이터가 서버로 가지 않게)
+  serverData: [],
   // 처음 설치할 때만 넣고 이후엔 사용자가 바꾼 값을 유지할 파일들
   once: [
     'options.txt', 'servers.dat',
@@ -54,13 +58,18 @@ const DEFAULT_CONFIG = {
   changelogLimit: 30
 }
 
+const FLAG_OPTIONS = ['force', 'help', 'publish', 'no-cdn', 'no-url-check']
+const VALUE_OPTIONS = ['source', 'out', 'version', 'notes', 'notes-file', 'config', 'github']
+
 function parseArgs (argv) {
   const args = {}
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (!a.startsWith('--')) throw new Error(`알 수 없는 인자: ${a}`)
     const key = a.slice(2)
-    if (['force', 'help', 'publish', 'no-cdn', 'no-url-check'].includes(key)) {
+    // 오타(예: --publishcd)를 조용히 무시하면 업로드가 빠진 채 끝나므로 바로 알려준다
+    if (!FLAG_OPTIONS.includes(key) && !VALUE_OPTIONS.includes(key)) throw new Error(`알 수 없는 옵션: ${a} (--help 로 목록 확인)`)
+    if (FLAG_OPTIONS.includes(key)) {
       args[key] = true
     } else {
       if (argv[i + 1] === undefined) throw new Error(`${a} 에 값이 필요합니다`)
@@ -76,7 +85,7 @@ const USAGE = `사용법:
 
   --source        커스포지 인스턴스 폴더 (mods, config 등이 있는 곳)
   --out           결과물 폴더. 기존 manifest.json 이 있으면 패치노트 이력을 이어 붙인다
-  --version       새 모드팩 버전 (예: 1.3.0)
+  --version       새 모드팩 버전 (예: 1.3.0). 생략하면 이전 버전 +1
   --config        설정 파일. 생략하면 <source>/pack.config.json 을 찾는다
   --publish       GitHub 모드일 때 릴리스까지 자동으로 올린다 (GITHUB_TOKEN 환경변수 필요)
   --no-cdn        커스포지 CDN 을 쓰지 않고 모든 파일을 직접 올린다
@@ -150,7 +159,7 @@ const BUNDLE_LIMIT = 16 * 1024 * 1024 // 작은 파일 묶음(zip) 하나의 목
  * - 큰 파일은 f-<sha1>, 작은 파일은 폴더 단위 묶음 b-<sha1>.zip
  * - 이전 버전 매니페스트에 같은 해시가 있으면 그 주소를 그대로 재사용 (다시 올리지도, 다시 받지도 않음)
  */
-async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, selfHosted, bundles, newAssets, largeFile, bundleLimit }) {
+async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, previousServer, selfHosted, bundles, newAssets, largeFile, bundleLimit }) {
   const releaseDir = path.join(outDir, `release-${version}`)
   await fsp.rm(releaseDir, { recursive: true, force: true })
   await fsp.mkdir(releaseDir, { recursive: true })
@@ -161,6 +170,7 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
     if (f.url && f.url.startsWith(ownPrefix)) known.set(`f:${f.sha1}`, f.url)
   }
   for (const b of (previous && previous.bundles) || []) known.set(`b:${b.sha1}`, b.url)
+  for (const b of (previousServer && previousServer.bundles) || []) if (b.enc) known.set(`s:${b.sha1}`, b.url)
 
   let reused = 0
   const thisRelease = github.assetUrl(repo, version, '')
@@ -196,16 +206,69 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
     bundles.push({ id: g.id, url, sha1, size })
     for (const f of g.files) f.bundle = g.id
   }
-  return { releaseDir, reused }
+  return { releaseDir, addAsset, reused: () => reused }
 }
 
-async function build ({ source, out, version, notes, config: configPath, force, github: githubArg, ...flags }) {
+/**
+ * 서버 패키지: 서버 컴의 서버시작.bat 이 받아가는 목록 (server-manifest.bin, 전체 암호화).
+ * - 친구들과 같은 파일(모드, 설정 등)은 같은 주소·묶음을 그대로 쓴다
+ * - 서버 전용 파일(서버 스크립트·데이터)은 암호화 묶음(s-<sha1>.bin)으로 올린다
+ * - 클라이언트 전용 모드는 뺀다
+ */
+async function buildServerPackage ({ serverKey, included, clientFiles, clientBundles, sourceDir, outDir, releaseDir, addAsset, bundleLimit, userConfig, base }) {
+  const clientOnly = clientOnlyPatterns(userConfig)
+  const byPath = new Map(clientFiles.map(f => [f.path, f]))
+  const files = []
+  const secretFiles = []
+  for (const rel of included) {
+    if (!matchesAny(rel, SERVER_DIRS) || matchesAny(rel.toLowerCase(), clientOnly)) continue
+    const shared = byPath.get(rel)
+    const entry = shared
+      ? { path: rel, sha1: shared.sha1, size: shared.size, ...(shared.url ? { url: shared.url } : {}), ...(shared.bundle ? { bundle: shared.bundle } : {}) }
+      : { path: rel, sha1: await sha1File(path.join(sourceDir, ...rel.split('/'))), size: (await fsp.stat(path.join(sourceDir, ...rel.split('/')))).size }
+    // 모드는 항상 똑같이, 나머지는 관리자가 바꿨을 때만 (서버가 실행 중에 쓰는 데이터 보존)
+    if (!rel.startsWith('mods/')) entry.mode = 'update'
+    if (!shared) secretFiles.push(entry)
+    files.push(entry)
+  }
+
+  const bundles = clientBundles.filter(b => files.some(f => f.bundle === b.id))
+  const tmp = path.join(releaseDir, '.building-server.zip')
+  for (const g of groupFiles(secretFiles, bundleLimit)) {
+    await writeZip(tmp, g.files.map(f => ({ name: f.path, file: path.join(sourceDir, ...f.path.split('/')) })))
+    const sealed = secret.encrypt(await fsp.readFile(tmp), serverKey)
+    await fsp.rm(tmp, { force: true })
+    const sha1 = require('node:crypto').createHash('sha1').update(sealed).digest('hex')
+    const url = await addAsset(`s:${sha1}`, `s-${sha1}.bin`, sealed.length, dest => fsp.writeFile(dest, sealed))
+    const id = `server:${g.id}`
+    bundles.push({ id, url, sha1, size: sealed.length, enc: true })
+    for (const f of g.files) f.bundle = id
+  }
+
+  const serverManifest = { ...base, strictDirs: [], clientOnly, bundles, files }
+  validateManifest(serverManifest)
+  // 다음 빌드에서 재사용 판단용 (로컬에만 보관, 업로드는 암호화본만)
+  await fsp.writeFile(path.join(outDir, 'server-manifest.json'), JSON.stringify(serverManifest, null, 2))
+  const binFile = path.join(releaseDir, 'server-manifest.bin')
+  await fsp.writeFile(binFile, secret.encrypt(Buffer.from(JSON.stringify(serverManifest)), serverKey))
+  return { binFile, fileCount: files.length, secretCount: secretFiles.length }
+}
+
+function nextVersion (v) {
+  const parts = String(v).split('.')
+  const last = parts.length - 1
+  if (!/^\d+$/.test(parts[last])) throw new Error(`이전 버전 ${v} 에서 다음 버전을 정할 수 없습니다. --version 을 적어주세요.`)
+  parts[last] = String(Number(parts[last]) + 1)
+  return parts.join('.')
+}
+
+async function build ({ source, out, version, notes, config: configPath, force, github: githubArg, serverKey = process.env.SERVER_PACK_KEY, ...flags }) {
   const sourceDir = path.resolve(source)
   const outDir = path.resolve(out)
   const userConfig = await readJsonIfExists(configPath ? path.resolve(configPath) : path.join(sourceDir, 'pack.config.json')) || {}
   // exclude / once 는 기본값에 더한다 (기본 목록을 매번 다시 적지 않아도 되게)
   const merged = key => [...DEFAULT_CONFIG[key], ...(userConfig[key] || [])]
-  const config = { ...DEFAULT_CONFIG, ...userConfig, exclude: merged('exclude'), once: merged('once'), serverOnly: merged('serverOnly') }
+  const config = { ...DEFAULT_CONFIG, ...userConfig, exclude: merged('exclude'), once: merged('once'), serverOnly: merged('serverOnly'), serverData: merged('serverData') }
   const repo = githubArg || config.github
   const mode = repo ? 'github' : 'objects'
 
@@ -221,8 +284,9 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     throw new Error(`이미 ${version} 버전이 빌드되어 있습니다. 버전을 올리거나 --force 를 쓰세요.`)
   }
 
-  const included = (await walk(sourceDir))
-    .filter(p => matchesAny(p, config.include) && !matchesAny(p, config.exclude))
+  const walked = (await walk(sourceDir)).filter(p => matchesAny(p, config.include) && !matchesAny(p, config.exclude))
+  const serverDataFiles = walked.filter(p => matchesAny(p, config.serverData))
+  const included = walked.filter(p => !matchesAny(p, config.serverData))
   const serverOnlyFiles = included.filter(p => matchesAny(p, config.serverOnly))
   const candidates = included.filter(p => !matchesAny(p, config.serverOnly)).sort()
   const cdnMap = flags['no-cdn'] || config.useCurseForgeCdn === false ? new Map() : await readCurseForgeFiles(sourceDir)
@@ -257,15 +321,17 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   const bundles = []
   const newAssets = []
   let releaseDir
-  let reused = 0
+  let assets
   let newObjects = 0
+  const MB = 1024 * 1024
+  const bundleLimit = config.bundleSizeMB ? config.bundleSizeMB * MB : BUNDLE_LIMIT
   if (mode === 'github') {
-    const MB = 1024 * 1024
-    ;({ releaseDir, reused } = await buildGithubAssets({
-      repo, version, sourceDir, outDir, previous, selfHosted, bundles, newAssets,
-      largeFile: config.largeFileMB ? config.largeFileMB * MB : LARGE_FILE,
-      bundleLimit: config.bundleSizeMB ? config.bundleSizeMB * MB : BUNDLE_LIMIT
-    }))
+    assets = await buildGithubAssets({
+      repo, version, sourceDir, outDir, previous, selfHosted, bundles, newAssets, bundleLimit,
+      previousServer: await readJsonIfExists(path.join(outDir, 'server-manifest.json')),
+      largeFile: config.largeFileMB ? config.largeFileMB * MB : LARGE_FILE
+    })
+    releaseDir = assets.releaseDir
   } else {
     for (const f of selfHosted) {
       const objFile = path.join(outDir, ...objectPath(f.sha1).split('/'))
@@ -284,12 +350,9 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     ...history
   ].slice(0, config.changelogLimit)
 
+  const base = { formatVersion: FORMAT_VERSION, packName: config.packName, version, minecraft, loader }
   const manifest = {
-    formatVersion: FORMAT_VERSION,
-    packName: config.packName,
-    version,
-    minecraft,
-    loader,
+    ...base,
     ...(config.java ? { java: config.java } : {}),
     ...(config.server ? { server: config.server } : {}),
     ...(config.memory ? { memory: config.memory } : {}),
@@ -305,6 +368,14 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     // 릴리스에 올릴 파일은 releaseDir 한 곳에 모아 둔다 (수동 업로드 시 폴더 안 파일을 전부 첨부하면 됨)
     await fsp.copyFile(manifestFile, path.join(releaseDir, 'manifest.json'))
     newAssets.push(path.join(releaseDir, 'manifest.json'))
+  }
+  let serverPackage = null
+  if (mode === 'github' && serverKey) {
+    serverPackage = await buildServerPackage({
+      serverKey, included, clientFiles: files, clientBundles: bundles, sourceDir, outDir, releaseDir,
+      addAsset: assets.addAsset, bundleLimit, userConfig, base
+    })
+    newAssets.push(serverPackage.binFile)
   }
 
   // 어디가 큰지 보여주기 위한 요약: 폴더별 합계, 가장 큰 파일
@@ -325,11 +396,13 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     newObjects,
     newAssets,
     releaseDir,
-    reused,
+    reused: assets ? assets.reused() : 0,
+    serverPackage,
     manifestFile,
     cdnCount: files.length - selfHosted.length,
     cdnFailed,
     serverOnlyCount: serverOnlyFiles.length,
+    serverDataFiles,
     selfHostedBytes: selfHosted.reduce((n, f) => n + f.size, 0),
     totalBytes: files.reduce((n, f) => n + f.size, 0)
   }
@@ -339,6 +412,11 @@ const mb = n => `${(n / 1024 / 1024).toFixed(1)} MB`
 
 async function main () {
   const args = parseArgs(process.argv.slice(2))
+  if (!args.version && args.out && !args.help) {
+    // 버전을 안 적으면 이전 버전의 마지막 숫자를 +1 (1.0.1 → 1.0.2)
+    const previous = await readJsonIfExists(path.join(path.resolve(args.out), 'manifest.json'))
+    if (previous) args.version = nextVersion(previous.version)
+  }
   if (args.help || !args.source || !args.out || !args.version) {
     console.log(USAGE)
     process.exit(args.help ? 0 : 1)
@@ -349,6 +427,7 @@ async function main () {
   console.log(`✔ ${manifest.packName} v${manifest.version} (MC ${manifest.minecraft}, ${manifest.loader.type} ${manifest.loader.version || ''})`)
   console.log(`  파일 ${manifest.files.length}개 (총 ${mb(r.totalBytes)})`)
   console.log(`  - 서버 전용이라 배포에서 뺀 파일: ${r.serverOnlyCount}개 (${[...new Set(DEFAULT_CONFIG.serverOnly)].join(', ')} 등)`)
+  if (r.serverDataFiles.length) console.log(`  - 서버 데이터(serverData)라 어디에도 배포 안 함: ${r.serverDataFiles.length}개`)
   console.log(`  - 커스포지 CDN 에서 받음: ${r.cdnCount}개`)
   console.log(`  - 직접 올릴 파일: ${manifest.files.length - r.cdnCount}개 (${mb(r.selfHostedBytes)})`)
   console.log('  폴더별 크기:')
@@ -390,4 +469,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { build, detectFromCurseForge, DEFAULT_CONFIG }
+module.exports = { build, detectFromCurseForge, nextVersion, parseArgs, readJsonIfExists, sha1File, walk, DEFAULT_CONFIG }
