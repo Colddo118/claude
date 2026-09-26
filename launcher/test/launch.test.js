@@ -111,8 +111,9 @@ test('NeoForge 1.21.1 실행 인자', async () => {
   assert.ok(args.includes('-Xms1024M'))
   // NeoForge 모듈 경로: 라이브러리 폴더와 구분자가 치환되어야 한다
   assert.equal(after1(args, '-p'), [
-    path.join(libs, 'cpw/mods/bootstraplauncher/2.0.2/bootstraplauncher-2.0.2.jar').replace(/\\/g, '/'),
-    path.join(libs, 'cpw/mods/securejarhandler/3.0.8/securejarhandler-3.0.8.jar').replace(/\\/g, '/')
+    // ${library_directory} 만 OS 경로로 바뀌고 뒤쪽은 버전 JSON 의 '/' 그대로 (윈도우에서도 자바가 둘 다 받아들임)
+    libs + '/cpw/mods/bootstraplauncher/2.0.2/bootstraplauncher-2.0.2.jar',
+    libs + '/cpw/mods/securejarhandler/3.0.8/securejarhandler-3.0.8.jar'
   ].join(path.delimiter))
   assert.ok(args.includes(`-DlibraryDirectory=${libs}`))
   // 클래스패스에 올라가는 바닐라 jar(1.21.1.jar)가 ignoreList 에 있어야 모듈 충돌이 안 난다
