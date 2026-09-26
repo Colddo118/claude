@@ -96,6 +96,7 @@ async function exclusive (fn) {
 function summarize (manifest, state, plan) {
   return {
     packName: manifest.packName,
+    server: manifest.server && manifest.server.address ? manifest.server.address + (manifest.server.port ? `:${manifest.server.port}` : '') : null,
     minecraft: manifest.minecraft,
     loader: manifest.loader,
     remoteVersion: manifest.version,

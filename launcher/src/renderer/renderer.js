@@ -5,6 +5,10 @@ const $ = id => document.getElementById(id)
 
 const ui = {
   status: $('status-text'),
+  detail: $('status-detail'),
+  pct: $('progress-pct'),
+  server: $('server-text'),
+  accountSub: $('account-sub'),
   bar: $('progress-bar'),
   version: $('version-text'),
   play: $('play-btn'),
@@ -24,20 +28,34 @@ let gameRunning = false
 
 // ---------------------------------------------------------------- formatting
 
+// 숫자와 단위 사이는 줄바꿈 안 되는 공백 (588.4 / MB 처럼 갈라지지 않게)
 function formatBytes (n) {
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)}\u00a0KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}\u00a0MB`
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)}\u00a0GB`
+}
+const count = n => Number(n).toLocaleString('ko-KR')
+// "238 / 588 MB" 처럼 단위를 한 번만 (보조 줄이 한 줄에 들어가게)
+function formatPair (current, total) {
+  const [div, unit] = total >= 1024 ** 3 ? [1024 ** 3, 'GB'] : total >= 1024 ** 2 ? [1024 ** 2, 'MB'] : [1024, 'KB']
+  const f = n => { const v = n / div; return v >= 100 ? v.toFixed(0) : v.toFixed(1) }
+  return `${f(current)} / ${f(total)}\u00a0${unit}`
 }
 
-function setStatus (text, { error = false } = {}) {
+const LOADER_NAMES = { neoforge: 'NeoForge', forge: 'Forge', fabric: 'Fabric', quilt: 'Quilt' }
+
+// text = 굵은 한 줄, detail = 그 아래 흐린 보조 줄
+function setStatus (text, { error = false, detail = '' } = {}) {
   ui.status.textContent = text
   ui.status.classList.toggle('error', error)
+  ui.detail.textContent = error ? '' : detail
 }
 
-function setProgress (current, total) {
+// showPct: 실제로 진행 중일 때만 칸 이름 옆에 % 표시
+function setProgress (current, total, showPct = false) {
   const pct = total > 0 ? Math.min(100, (current / total) * 100) : 0
   ui.bar.style.width = `${pct}%`
+  ui.pct.textContent = showPct ? `${Math.floor(pct)}%` : ''
 }
 
 // 패치노트는 간단한 마크다운(#, -, 빈 줄)만 지원하고, 항상 textContent 로 넣는다.
@@ -100,6 +118,7 @@ function renderChangelog (entries) {
 
 function renderAccount () {
   ui.accountName.textContent = account ? account.name : '로그인 안 됨'
+  ui.accountSub.textContent = account ? '마이크로소프트 계정' : '로그인이 필요해요'
   ui.loginBtn.classList.toggle('hidden', !!account)
   ui.logoutBtn.classList.toggle('hidden', !account)
 }
@@ -128,24 +147,32 @@ function renderPlay () {
 
 function renderPack () {
   if (!pack) return
-  const loader = pack.loader.type === 'vanilla' ? '' : ` · ${pack.loader.type} ${pack.loader.version}`
-  ui.packMeta.textContent = `${pack.packName || ''} · Minecraft ${pack.minecraft}${loader}`
-  ui.version.textContent = pack.installedVersion
-    ? `설치된 버전 v${pack.installedVersion} · 최신 v${pack.remoteVersion}`
-    : `최신 v${pack.remoteVersion} (미설치)`
+  const loader = pack.loader.type === 'vanilla' ? '' : ` · ${LOADER_NAMES[pack.loader.type] || pack.loader.type} ${pack.loader.version}`
+  // 팩 이름이 런처 이름과 같으면 제목과 겹치므로 뺀다
+  const name = pack.packName && pack.packName !== info.appName ? `${pack.packName} · ` : ''
+  ui.packMeta.textContent = `${name}Minecraft ${pack.minecraft}${loader}`
+  const updating = pack.needsUpdate && pack.versionChanged
+  ui.version.textContent = !pack.installedVersion
+    ? `미설치 → v${pack.remoteVersion}`
+    : updating ? `v${pack.installedVersion} → v${pack.remoteVersion}` : `v${pack.installedVersion} (최신)`
+  $('facts').classList.remove('hidden')
+  $('server-row').classList.toggle('hidden', !pack.server)
+  ui.server.textContent = pack.server || ''
   ui.badge.classList.toggle('hidden', !(pack.needsUpdate && !pack.firstInstall && pack.versionChanged))
   renderChangelog(pack.changelog)
 
+  const size = `파일 ${count(pack.downloadCount)}개 · ${formatBytes(pack.downloadBytes)}`
   if (!pack.needsUpdate) {
-    setStatus('최신 버전입니다. 바로 접속할 수 있어요.')
+    setStatus('최신 버전이에요', { detail: '바로 접속할 수 있어요.' })
   } else if (pack.firstInstall) {
-    setStatus(`처음 설치: 파일 ${pack.downloadCount}개 (${formatBytes(pack.downloadBytes)})`)
+    setStatus('처음 설치가 필요해요', { detail: size })
   } else if (pack.versionChanged) {
-    setStatus(`업데이트 있음: v${pack.installedVersion} → v${pack.remoteVersion} · 파일 ${pack.downloadCount}개 (${formatBytes(pack.downloadBytes)})`)
+    setStatus(`새 버전 v${pack.remoteVersion}`, { detail: size })
   } else {
-    setStatus(`손상되거나 바뀐 파일 ${pack.downloadCount + pack.removalCount + pack.strayCount}개를 복구해야 합니다.`)
+    setStatus('고쳐야 할 파일이 있어요', { detail: `손상되거나 바뀐 파일 ${count(pack.downloadCount + pack.removalCount + pack.strayCount)}개` })
   }
-  setProgress(0, 1)
+  // 최신이면 막대를 꽉 채워 "준비 완료" 로 보이게
+  setProgress(pack.needsUpdate ? 0 : 1, 1)
 }
 
 async function run (task) {
@@ -177,6 +204,15 @@ async function check () {
     if (result.settings) info.settings = result.settings
     renderPack()
   })
+  if (!pack) {
+    ui.packMeta.textContent = '서버에 연결하지 못했어요'
+    if (!ui.changelog.querySelector('.entry')) {
+      const p = document.createElement('p')
+      p.className = 'muted'
+      p.textContent = '패치노트를 불러오지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.'
+      ui.changelog.replaceChildren(p)
+    }
+  }
 }
 
 // ---------------------------------------------------------------- actions
@@ -186,7 +222,7 @@ async function login () {
     setStatus('마이크로소프트 로그인 창에서 로그인해 주세요...')
     account = await api.login()
     renderAccount()
-    setStatus(`${account.name} 님으로 로그인했습니다.`)
+    setStatus(`${account.name} 님, 반가워요`, { detail: '로그인했습니다.' })
     return account
   })
 }
@@ -199,22 +235,24 @@ async function play () {
     gameRunning = true
     pack = { ...pack, needsUpdate: false, firstInstall: false, installedVersion: pack.remoteVersion, changelog: pack.changelog.map(c => ({ ...c, isNew: false })) }
     renderPack()
-    setStatus('게임 실행 중... 즐거운 시간 되세요!')
+    setStatus('게임 실행 중', { detail: '즐거운 시간 되세요!' })
     setProgress(1, 1)
   })
 }
 
 api.onProgress(p => {
   if (p.phase === 'download') {
-    const pct = p.total ? Math.floor((p.current / p.total) * 100) : 0
-    setStatus(`다운로드 중 ${p.files}/${p.fileTotal} · ${formatBytes(p.current)} / ${formatBytes(p.total)} (${pct}%)`)
-    setProgress(p.current, p.total)
+    setStatus('모드팩 받는 중', { detail: `${formatPair(p.current, p.total)} · 파일 ${count(p.files)} / ${count(p.fileTotal)}` })
+    setProgress(p.current, p.total, true)
   } else if (p.phase === 'verify') {
-    setStatus(`파일 확인 중 ${p.current}/${p.total}`)
-    setProgress(p.current, p.total)
+    setStatus('파일 확인 중', { detail: `${count(p.current)} / ${count(p.total)}개` })
+    setProgress(p.current, p.total, true)
   } else if (p.text) {
-    setStatus(p.text)
-    if (p.total) setProgress(p.current, p.total)
+    // 게임 설치 단계는 "마인크래프트 설치 중 45%" 처럼 온다 → 글자와 % 를 나눠서 표시
+    const m = p.text.match(/^(.*?)\s*(\d+)%$/)
+    setStatus(m ? m[1] : p.text)
+    if (p.total) setProgress(p.current, p.total, true)
+    else setProgress(0, 1)
   }
 })
 
@@ -223,6 +261,7 @@ api.onGameExit(({ code, crashed }) => {
   renderPlay()
   if (crashed) {
     setStatus(`게임이 비정상 종료되었습니다 (코드 ${code}). 설정 → 로그 폴더 열기에서 latest.log 를 확인하세요.`, { error: true })
+    setProgress(0, 1)
   } else {
     check()
   }
@@ -274,7 +313,7 @@ $('repair-btn').addEventListener('click', async () => {
   await run(async () => {
     pack = await api.repairPack()
     renderPack()
-    setStatus('모든 파일을 검사하고 복구했습니다.')
+    setStatus('파일 검사 완료', { detail: '모든 파일을 검사하고 복구했습니다.' })
   })
 })
 
@@ -294,6 +333,7 @@ async function boot () {
   info = await api.init()
   document.title = info.appName
   $('app-name').textContent = info.appName
+  $('launcher-version').textContent = info.appVersion ? `런처 v${info.appVersion}` : ''
   $('link-discord').classList.toggle('hidden', !info.links.discord)
   $('link-website').classList.toggle('hidden', !info.links.website)
   account = info.account

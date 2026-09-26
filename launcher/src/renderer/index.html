@@ -27,22 +27,25 @@
 
     <div class="side">
       <section class="well install">
-        <div class="well-head"><h2>설치</h2></div>
+        <div class="well-head"><h2>설치</h2><span id="progress-pct" class="pct"></span></div>
         <div id="status-text">준비 중...</div>
+        <div id="status-detail" class="muted small"></div>
         <div class="progress"><div id="progress-bar"></div></div>
-        <div id="version-text" class="muted small"></div>
+        <dl id="facts" class="facts hidden">
+          <div><dt>버전</dt><dd id="version-text">-</dd></div>
+          <div id="server-row" class="hidden"><dt>서버</dt><dd id="server-text"></dd></div>
+        </dl>
       </section>
 
       <section class="well account-well">
         <div class="well-head"><h2>계정</h2></div>
         <div id="account" class="account">
-          <span id="account-name" class="muted">로그인 안 됨</span>
+          <div class="who">
+            <span id="account-name">로그인 안 됨</span>
+            <span id="account-sub" class="muted small">로그인이 필요해요</span>
+          </div>
           <button id="login-btn" class="ghost">로그인</button>
           <button id="logout-btn" class="ghost hidden">로그아웃</button>
-        </div>
-        <div class="links">
-          <button id="link-website" class="ghost hidden">웹사이트</button>
-          <button id="link-discord" class="ghost hidden">디스코드</button>
         </div>
       </section>
     </div>
@@ -50,13 +53,17 @@
 
   <!-- 아랫줄: 왼쪽 보조 버튼 · 오른쪽 초록 행동 버튼 -->
   <footer class="bottombar">
-    <button id="settings-btn" class="ghost" title="설정">설정</button>
+    <div class="links">
+      <button id="settings-btn" class="ghost" title="설정">설정</button>
+      <button id="link-discord" class="ghost hidden">디스코드</button>
+      <button id="link-website" class="ghost hidden">웹사이트</button>
+    </div>
     <button id="play-btn" class="primary" disabled>확인 중...</button>
   </footer>
 
   <dialog id="settings">
     <form method="dialog" class="settings-form">
-      <div class="dialog-title"><h2>설정</h2></div>
+      <div class="dialog-title"><h2>설정</h2><span id="launcher-version" class="muted small"></span></div>
 
       <section class="well">
         <div class="well-head">
