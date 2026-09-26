@@ -215,7 +215,8 @@ test('커스포지 NeoForge 인스턴스 감지', async () => {
 test('pack.config.json 의 exclude 는 기본 제외 목록에 더해진다', async () => {
   const src = path.join(tmp, 'exclude-src')
   write(src, 'minecraftinstance.json', JSON.stringify({ gameVersion: '1.21.1', baseModLoader: { name: 'neoforge-21.1.77' } }))
-  write(src, 'pack.config.json', JSON.stringify({ exclude: ['kubejs/dev'], serverOnly: ['defaultconfigs'] }))
+  write(src, 'pack.config.json', JSON.stringify({ exclude: ['kubejs/dev'], serverOnly: ['defaultconfigs'], serverData: ['kubejs/data/rpg/telemetry.json'] }))
+  write(src, 'kubejs/data/rpg/telemetry.json', '{"admin test data":1}')
   write(src, 'mods/a.jar', 'a')
   write(src, 'mods/a.jar.bak', 'backup')
   write(src, 'kubejs/startup_scripts/main.js', 'x')
@@ -230,6 +231,7 @@ test('pack.config.json 의 exclude 는 기본 제외 목록에 더해진다', as
   const r = await build({ source: src, out: path.join(tmp, 'exclude-out'), version: '1.0.0' })
   // 서버 전용(kubejs/server_scripts, kubejs/data 기본 + 직접 추가한 defaultconfigs)은 배포에 안 들어감
   assert.equal(r.serverOnlyCount, 3)
+  assert.deepEqual(r.serverDataFiles, ['kubejs/data/rpg/telemetry.json'])
   assert.deepEqual(r.manifest.files.map(f => [f.path, f.mode]), [
     ['config/create-common.toml', 'update'],
     ['config/iris.properties', 'once'], // 개인 취향 설정은 처음 한 번만

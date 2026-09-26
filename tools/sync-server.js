@@ -21,7 +21,7 @@ const path = require('node:path')
 const { matchesAny, isSafeRelPath } = require('../launcher/src/common/manifest')
 const { DEFAULT_CONFIG, readJsonIfExists, sha1File, walk } = require('./build-manifest')
 
-const { SERVER_DIRS, DEFAULT_CLIENT_ONLY } = require('./lib/server-files')
+const { SERVER_DIRS, ADMIN_MANAGED, DEFAULT_CLIENT_ONLY } = require('./lib/server-files')
 const STATE_FILE = '.sync-state.json'
 
 function parseArgs (argv) {
@@ -75,18 +75,31 @@ async function syncServer ({ source, server, config: configPath, dryRun = false,
   const serverFile = rel => path.join(serverDir, ...rel.split('/'))
   const exists = rel => fs.existsSync(serverFile(rel))
 
+  // 서버 데이터 보호: 관리자 관리 영역이 아닌 파일은 서버에서 바뀌었으면(마지막 반영 내용과 다르면) 건드리지 않는다
+  const serverChanged = async rel => exists(rel) && (!state.files[rel] || await sha1File(serverFile(rel)) !== state.files[rel])
+  const protectedFiles = []
+
   const copies = [] // { rel, reason }
   for (const [rel, { sha1, strict }] of wanted) {
     if (!exists(rel)) {
       copies.push({ rel, reason: '새 파일' })
     } else if (strict || state.files[rel] !== sha1) {
       // mods 는 항상 인스턴스와 같게, 나머지는 인스턴스 쪽이 바뀌었을 때만
-      if (await sha1File(serverFile(rel)) !== sha1) copies.push({ rel, reason: strict ? '모드 교체' : '인스턴스에서 수정됨' })
+      if (await sha1File(serverFile(rel)) === sha1) continue
+      if (!strict && !matchesAny(rel, ADMIN_MANAGED) && await serverChanged(rel)) {
+        protectedFiles.push(rel)
+        continue
+      }
+      copies.push({ rel, reason: strict ? '모드 교체' : '인스턴스에서 수정됨' })
     }
   }
 
   // 이 도구가 예전에 넣었는데 이제 목록에 없는 파일 → 삭제 (클라이언트 전용으로 바뀐 모드 포함)
-  const removals = Object.keys(state.files).filter(rel => !wanted.has(rel) && exists(rel))
+  const removals = []
+  for (const rel of Object.keys(state.files).filter(rel => !wanted.has(rel) && exists(rel))) {
+    if (!rel.startsWith('mods/') && !matchesAny(rel, ADMIN_MANAGED) && await serverChanged(rel)) protectedFiles.push(rel)
+    else removals.push(rel)
+  }
   // 서버에 있는 클라이언트 전용 모드는 추적 여부와 상관없이 치운다 (그대로 두면 서버가 안 켜짐)
   for (const rel of (await walk(path.join(serverDir, 'mods')).catch(() => [])).map(p => `mods/${p}`)) {
     if (!rel.slice(5).includes('/') && matchesAny(rel.toLowerCase(), clientOnly) && !removals.includes(rel)) removals.push(rel)
@@ -96,7 +109,7 @@ async function syncServer ({ source, server, config: configPath, dryRun = false,
     .map(p => `mods/${p}`)
     .filter(rel => !rel.slice(5).includes('/') && rel.endsWith('.jar') && !wanted.has(rel) && !state.files[rel] && !removals.includes(rel))
 
-  const report = { copies, removals, skippedClientOnly, serverOnlyMods, dryRun }
+  const report = { copies, removals, protectedFiles, skippedClientOnly, serverOnlyMods, dryRun }
   if (dryRun) return report
 
   const backupRoot = path.join(serverDir, '.sync-backup', new Date().toISOString().replace(/[:.]/g, '-'))
@@ -131,6 +144,7 @@ async function syncServer ({ source, server, config: configPath, dryRun = false,
     // "인스턴스의 어떤 내용을 서버에 반영했는지" 기록. 복사가 필요했는데 실패한 파일은 기록하지 않아서 다음에 다시 시도한다.
     const pending = new Set(copies.map(c => c.rel))
     for (const [rel, { sha1 }] of wanted) {
+      if (protectedFiles.includes(rel)) continue // 서버 것 유지: 기록도 그대로
       if (copied.has(rel) || (!pending.has(rel) && exists(rel))) state.files[rel] = sha1
     }
     await fsp.writeFile(statePath, JSON.stringify({ syncedAt: new Date().toISOString(), files: state.files }, null, 2))
@@ -158,6 +172,9 @@ async function main () {
   console.log(`✔ ${r.dryRun ? '바뀔 예정' : '완료'}: 복사 ${r.copies.length}개, 삭제 ${r.removals.length}개`)
   if (r.skippedClientOnly.length) {
     console.log(`  클라이언트 전용이라 서버에 안 넣은 모드 ${r.skippedClientOnly.length}개: ${r.skippedClientOnly.map(p => path.basename(p)).join(', ')}`)
+  }
+  if (r.protectedFiles.length) {
+    console.log(`  서버에서 바뀐 데이터 파일이라 그대로 둔 것 ${r.protectedFiles.length}개: ${r.protectedFiles.join(', ')}`)
   }
   if (r.serverOnlyMods.length) {
     console.log(`  서버에만 있는 모드 (그대로 둠): ${r.serverOnlyMods.map(p => path.basename(p)).join(', ')}`)

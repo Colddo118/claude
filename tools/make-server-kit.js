@@ -94,6 +94,13 @@ const CLAUDE_MD = `# 이 폴더: KubejsRPG 마인크래프트 서버 (NeoForge)
 | .server-update-state.json | 마지막으로 적용한 버전과 파일 기록 (고치지 말 것) |
 | .update-backup/<시각>/ | 패치로 바뀌거나 지워진 파일의 이전 내용 |
 
+## 서버 데이터 보호 (server-update.js 가 지키는 원칙)
+- 월드, 플레이어 데이터, server.properties, 화이트리스트/OP/밴, 로그는 패치 대상이 아니라 절대 안 바뀝니다.
+- mods / config / defaultconfigs / scripts / kubejs 의 startup_scripts·server_scripts·client_scripts·assets 는
+  관리자 관리 영역이라 관리자가 바꾸면 서버도 바뀝니다 (백업 후).
+- 그 밖의 파일(kubejs/data, kubejs/config 등)은 서버가 한 번이라도 바꿨으면 관리자가 바꾸거나 지워도 그대로 둡니다.
+- server-update.json 의 "keep" 에 적은 파일은 무조건 서버 것을 유지합니다.
+
 ## 규칙
 1. **mods / config / defaultconfigs / kubejs / scripts 를 직접 고치지 마세요.** 다음 패치 때 덮이거나,
    관리자 인스턴스와 어긋납니다. 고쳐야 할 게 있으면 "관리자 인스턴스에서 무엇을 바꿔야 하는지" 를 정리해서

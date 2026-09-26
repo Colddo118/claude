@@ -77,6 +77,7 @@ test('서버 패키지: 암호화 배포와 서버 키트 원클릭 업데이트
   write(src, 'kubejs/startup_scripts/items.js', 'items v1')
   write(src, 'kubejs/server_scripts/recipes.js', 'SECRET_RECIPE_v1')
   write(src, 'kubejs/data/rpg/telemetry.json', '{"from":"admin"}')
+  write(src, 'kubejs/config/gear.generated.json', '{"gen":1}')
   write(src, 'kubejs/dev/notes.txt', 'dev only')
   write(src, 'options.txt', 'client options')
 
@@ -146,6 +147,28 @@ test('서버 패키지: 암호화 배포와 서버 키트 원클릭 업데이트
   // 키트를 다시 만들어도 서버에서 정한 keep 은 유지
   makeKit({ out: srv, repo: 'me/modpack', key })
   assert.deepEqual(JSON.parse(read(srv, 'server-update.json')).keep, ['kubejs/data/rpg/telemetry.json'])
+
+  // 서버 데이터 보호: keep 에 없어도, 관리자 관리 영역(mods/config/스크립트/assets)이 아닌 파일은
+  // 서버가 바꿨으면 관리자가 바꾸거나 지워도 서버 것을 그대로 둔다
+  write(srv, 'kubejs/config/gear.generated.json', '{"gen":"server"}')
+  write(srv, 'config/create-common.toml', 'speed=2 # rewritten by mod on server')
+  write(src, 'kubejs/config/gear.generated.json', '{"gen":2}')
+  write(src, 'config/create-common.toml', 'speed=3')
+  const r5 = await build({ source: src, out, version: '1.0.3', notes: '-', serverKey: key })
+  publishLocally(r5)
+  const u5 = await runKit(srv)
+  assert.equal(u5.code, 0, u5.out)
+  assert.equal(read(srv, 'kubejs/config/gear.generated.json'), '{"gen":"server"}')
+  assert.match(u5.out, /서버에서 바뀐 데이터 파일 1개/)
+  assert.equal(read(srv, 'config/create-common.toml'), 'speed=3') // config 는 관리자 관리 영역 → 관리자 것
+  fs.rmSync(path.join(src, 'kubejs', 'config', 'gear.generated.json'))
+  const r6 = await build({ source: src, out, version: '1.0.4', notes: '-', serverKey: key })
+  publishLocally(r6)
+  const u6 = await runKit(srv)
+  assert.equal(u6.code, 0, u6.out)
+  assert.equal(read(srv, 'kubejs/config/gear.generated.json'), '{"gen":"server"}') // 지우지도 않음
+  // 월드는 처음부터 끝까지 그대로
+  assert.equal(read(srv, 'world/level.dat'), 'world')
 
   // 키가 틀리면 명확한 오류
   write(srv, 'server-update.json', JSON.stringify({ repo: 'me/modpack', key: secret.newKey() }))

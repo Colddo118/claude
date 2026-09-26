@@ -84,9 +84,17 @@ test('서버 폴더 동기화', async () => {
     assert.equal(read(r3.backupDir, 'kubejs/server_scripts/recipes.js'), 'recipes v1')
     assert.equal(read(srv, 'kubejs/data/rpg/telemetry.json'), '{"from":"live server"}')
 
+    // 관리자가 서버 데이터 파일(telemetry)을 바꿔도, 서버가 바꾼 뒤라면 그대로 둔다
+    write(src, 'kubejs/data/rpg/telemetry.json', '{"from":"admin pc v2"}')
+    const r3b = await syncServer({ source: src, server: srv })
+    assert.deepEqual(r3b.copies, [])
+    assert.deepEqual(r3b.protectedFiles, ['kubejs/data/rpg/telemetry.json'])
+    assert.equal(read(srv, 'kubejs/data/rpg/telemetry.json'), '{"from":"live server"}')
+
     // 바뀐 게 없으면 아무것도 안 함
     const r4 = await syncServer({ source: src, server: srv })
     assert.equal(r4.copies.length + r4.removals.length, 0)
+    assert.deepEqual(r4.protectedFiles, ['kubejs/data/rpg/telemetry.json'])
     assert.equal(r4.backupDir, null)
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })

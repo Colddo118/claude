@@ -14,8 +14,16 @@ const DEFAULT_CLIENT_ONLY = [
   'mods/catalogue*', 'mods/fpsreducer*', 'mods/distanthorizons*'
 ]
 
+// 관리자가 관리하는 영역: 관리자가 바꾸면 서버에서도 바꾼다 (서버 쪽 수정이 있어도, 백업 후).
+// 여기에 없는 파일(kubejs/data, kubejs/config 등)은 "서버 데이터일 수 있음" 으로 보고,
+// 서버가 한 번이라도 바꿨으면 절대 덮어쓰거나 지우지 않는다.
+const ADMIN_MANAGED = [
+  'mods', 'config', 'defaultconfigs', 'scripts',
+  'kubejs/startup_scripts', 'kubejs/server_scripts', 'kubejs/client_scripts', 'kubejs/assets'
+]
+
 function clientOnlyPatterns (userConfig) {
   return [...DEFAULT_CLIENT_ONLY, ...((userConfig && userConfig.clientOnly) || [])].map(p => p.toLowerCase())
 }
 
-module.exports = { SERVER_DIRS, DEFAULT_CLIENT_ONLY, clientOnlyPatterns }
+module.exports = { SERVER_DIRS, ADMIN_MANAGED, DEFAULT_CLIENT_ONLY, clientOnlyPatterns }

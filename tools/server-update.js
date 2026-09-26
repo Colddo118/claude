@@ -25,6 +25,7 @@ const secret = require('../launcher/src/common/secret')
 const { validateManifest, matchesAny } = require('../launcher/src/common/manifest')
 const github = require('./lib/github')
 const setup = require('./lib/server-setup')
+const { ADMIN_MANAGED } = require('./lib/server-files')
 
 const CONFIG_FILE = 'server-update.json'
 const STATE_FILE = '.server-update-state.json'
@@ -71,6 +72,34 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
     return false
   })
   plan.removals = plan.removals.filter(p => !matchesAny(p, keep))
+
+  // 서버 데이터 보호: 관리자 관리 영역이 아닌 파일은, 서버에서 바뀌었으면 절대 덮어쓰거나 지우지 않는다.
+  // "서버에서 바뀜" = 이 도구가 마지막으로 설치한 내용과 다름 (설치한 적 없는데 서버에 있으면 서버 것으로 봄)
+  const protectedFiles = []
+  const serverChanged = async p => {
+    const local = path.join(serverDir, ...p.split('/'))
+    if (!fs.existsSync(local)) return false
+    const rec = state.files[p]
+    if (!rec || !rec.sha1) return true
+    return await updater.sha1File(local) !== rec.sha1
+  }
+  const stillDownload = []
+  for (const f of plan.downloads) {
+    if (!matchesAny(f.path, ADMIN_MANAGED) && await serverChanged(f.path)) {
+      if (state.files[f.path]) plan.records[f.path] = state.files[f.path]
+      protectedFiles.push(f.path)
+    } else {
+      stillDownload.push(f)
+    }
+  }
+  plan.downloads = stillDownload
+  const stillRemove = []
+  for (const p of plan.removals) {
+    if (!matchesAny(p, ADMIN_MANAGED) && !p.startsWith('mods/') && await serverChanged(p)) protectedFiles.push(p)
+    else stillRemove.push(p)
+  }
+  plan.removals = stillRemove
+
   const neededBundles = new Set(plan.downloads.filter(f => f.bundle && !f.url).map(f => f.bundle))
   plan.downloadBytes = plan.downloads.filter(f => !f.bundle || f.url).reduce((n, f) => n + f.size, 0) +
     (manifest.bundles || []).filter(b => neededBundles.has(b.id)).reduce((n, b) => n + b.size, 0)
@@ -82,6 +111,7 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
     removals: plan.removals,
     loader: manifest.loader,
     kept,
+    protectedFiles,
     manifest,
     loaderMissing: false,
     backupDir: null
@@ -155,7 +185,8 @@ async function main () {
       for (const p of r.downloads) console.log(`  + 받을 파일: ${p}`)
       for (const p of r.removals) console.log(`  - 지울 파일: ${p}`)
       for (const p of r.kept) console.log(`  = 보존 (keep): ${p}`)
-      console.log(`합계: 받을 파일 ${r.downloads.length}개, 지울 파일 ${r.removals.length}개, 보존 ${r.kept.length}개`)
+      for (const p of r.protectedFiles) console.log(`  = 서버 데이터라 유지: ${p}`)
+      console.log(`합계: 받을 파일 ${r.downloads.length}개, 지울 파일 ${r.removals.length}개, 보존 ${r.kept.length + r.protectedFiles.length}개`)
       if (r.loaderMissing) console.log(`• ${r.loader.type} ${r.loader.version} 서버가 아직 없습니다 → 실제 실행 때 자동 설치`)
       return process.exit(0)
     }
@@ -165,6 +196,10 @@ async function main () {
       console.log(`✔ 패치 적용: v${r.fromVersion || '(처음)'} → v${r.toVersion}  (받은 파일 ${r.downloads.length}개, 지운 파일 ${r.removals.length}개)`)
       for (const p of r.removals) console.log(`  - ${p}`)
       if (r.backupDir) console.log(`  이전 파일 백업: ${r.backupDir}`)
+    }
+    if (r.protectedFiles.length) {
+      console.log(`  서버에서 바뀐 데이터 파일 ${r.protectedFiles.length}개는 관리자 패치와 상관없이 그대로 뒀습니다:`)
+      for (const p of r.protectedFiles) console.log(`    = ${p}`)
     }
   } catch (e) {
     console.error(`✘ 패치 실패: ${e.message}`)
