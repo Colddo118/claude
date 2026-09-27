@@ -163,25 +163,38 @@ async function planUpdate ({ manifest, instanceDir, state, onProgress }) {
   }
 }
 
-async function downloadVerified ({ url, dest, sha1, size, signal, onBytes, retries = 3 }) {
+// 이 시간 동안 한 바이트도 안 오면 연결이 멈춘 것으로 보고 다시 시도한다
+const STALL_MS = 60 * 1000
+
+async function downloadVerified ({ url, dest, sha1, size, signal, onBytes, retries = 3, stallMs = STALL_MS }) {
   await fsp.mkdir(path.dirname(dest), { recursive: true })
   const tmp = dest + '.part'
   let lastError
   for (let attempt = 1; attempt <= retries; attempt++) {
     let received = 0
+    const stall = new AbortController()
+    const onAbort = () => stall.abort(signal.reason)
+    if (signal) signal.addEventListener('abort', onAbort, { once: true })
+    let timer
+    const kick = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => stall.abort(new Error(`${Math.round(stallMs / 1000)}초 동안 응답 없음`)), stallMs)
+    }
     try {
-      const res = await fetch(url, { signal })
+      kick()
+      const res = await fetch(url, { signal: stall.signal })
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
       const hash = crypto.createHash('sha1')
       const tap = new Transform({
         transform (chunk, _enc, cb) {
+          kick()
           hash.update(chunk)
           received += chunk.length
           onBytes && onBytes(chunk.length)
           cb(null, chunk)
         }
       })
-      await pipeline(Readable.fromWeb(res.body), tap, fs.createWriteStream(tmp), { signal })
+      await pipeline(Readable.fromWeb(res.body), tap, fs.createWriteStream(tmp), { signal: stall.signal })
       const digest = hash.digest('hex')
       if (digest !== sha1 || received !== size) {
         throw new Error(`체크섬 불일치 (기대 ${sha1}, 받음 ${digest})`)
@@ -192,7 +205,10 @@ async function downloadVerified ({ url, dest, sha1, size, signal, onBytes, retri
       onBytes && received && onBytes(-received)
       await fsp.rm(tmp, { force: true })
       if (signal && signal.aborted) throw e
-      lastError = e
+      lastError = stall.signal.aborted && stall.signal.reason instanceof Error ? stall.signal.reason : e
+    } finally {
+      clearTimeout(timer)
+      if (signal) signal.removeEventListener('abort', onAbort)
     }
   }
   throw new Error(`${path.basename(dest)} 다운로드 실패: ${lastError.message}`)
@@ -308,8 +324,9 @@ async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, sta
   const bundled = plan.downloads.filter(f => fileSource(manifest, f) === 'bundle')
 
   try {
-    for (const b of (manifest.bundles || []).filter(b => bundled.some(f => f.bundle === b.id))) {
-      const zipFile = path.join(instanceDir, '.launcher-tmp', `bundle-${b.sha1}.zip`)
+    // 묶음 여러 개를 동시에 받는다 (하나씩 받으면 첫 설치가 오래 걸림)
+    await runPool((manifest.bundles || []).filter(b => bundled.some(f => f.bundle === b.id)), Math.min(concurrency, 4), async b => {
+      const zipFile = path.join(instanceDir, '.launcher-tmp', b.sha1, 'bundle.zip')
       await downloadVerified({ url: new URL(b.url, manifestUrl).toString(), dest: zipFile, sha1: b.sha1, size: b.size, signal, onBytes })
       try {
         let zipBuf = await fsp.readFile(zipFile)
@@ -321,7 +338,8 @@ async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, sta
       } finally {
         await fsp.rm(path.dirname(zipFile), { recursive: true, force: true })
       }
-    }
+    })
+    await fsp.rm(path.join(instanceDir, '.launcher-tmp'), { recursive: true, force: true })
     await runPool(single, concurrency, async f => {
       const dest = toLocal(instanceDir, f.path)
       const url = f.url || new URL(objectPath(f.sha1), manifestUrl).toString()
@@ -345,5 +363,6 @@ module.exports = {
   planUpdate,
   applyUpdate,
   sha1File,
-  walkFiles
+  walkFiles,
+  downloadVerified
 }

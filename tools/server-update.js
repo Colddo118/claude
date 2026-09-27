@@ -123,6 +123,8 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
   if (!check && (plan.needsUpdate || plan.removals.length)) {
     report.backupDir = path.join(serverDir, '.update-backup', new Date().toISOString().replace(/[:.]/g, '-'))
     let lastPct = -1
+    let lastLog = 0
+    const mb = n => (n / 1024 / 1024).toFixed(0)
     await updater.applyUpdate({
       manifest,
       manifestUrl: url,
@@ -134,8 +136,13 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
       backupDir: report.backupDir,
       onProgress: p => {
         if (p.phase !== 'download' || !p.total) return
-        const pct = Math.floor((p.current / p.total) * 10) * 10
-        if (pct !== lastPct) { lastPct = pct; log(`  받는 중 ${pct}%`) }
+        // 5% 마다, 그리고 멈춘 게 아니라는 걸 알 수 있게 10초마다
+        const pct = Math.floor((p.current / p.total) * 100)
+        if (pct >= lastPct + 5 || (Date.now() - lastLog > 10000 && pct !== lastPct) || (p.current >= p.total && pct !== lastPct)) {
+          lastPct = pct
+          lastLog = Date.now()
+          log(`  받는 중 ${pct}% (${mb(p.current)} / ${mb(p.total)} MB)`)
+        }
       }
     })
     if (!fs.existsSync(report.backupDir)) report.backupDir = null
