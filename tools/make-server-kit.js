@@ -65,6 +65,14 @@ node server-update.js
 pause
 `
 
+const RESTORE_BAT = `@echo off
+chcp 65001 >nul
+cd /d "%~dp0"
+where node >nul 2>nul || (echo Node.js is not installed. Install the LTS version from https://nodejs.org & pause & exit /b 1)
+node server-update.js --restore
+pause
+`
+
 const CHECK_BAT = `@echo off
 chcp 65001 >nul
 cd /d "%~dp0"
@@ -93,6 +101,8 @@ const CLAUDE_MD = `# 이 폴더: KubejsRPG 마인크래프트 서버 (NeoForge)
 | 서버시작.bat / 서버업데이트.bat / 미리보기.bat | 패치+실행 / 패치만 / 바뀔 내용만 보기 |
 | .server-update-state.json | 마지막으로 적용한 버전과 파일 기록 (고치지 말 것) |
 | .update-backup/<시각>/ | 패치로 바뀌거나 지워진 파일의 이전 내용 |
+| backups/ (server-update.json 의 backup.dir) | 월드 증분 백업. objects/ = 파일 내용, snapshots/ = 백업 시점별 목록. **직접 고치거나 지우지 말 것** |
+| 백업복원.bat | 백업 목록에서 골라 월드 되돌리기 |
 
 ## 서버 데이터 보호 (server-update.js 가 지키는 원칙)
 - 월드, 플레이어 데이터, server.properties, 화이트리스트/OP/밴, 로그는 패치 대상이 아니라 절대 안 바뀝니다.
@@ -124,6 +134,10 @@ const CLAUDE_MD = `# 이 폴더: KubejsRPG 마인크래프트 서버 (NeoForge)
   공식 설치 파일을 받아 서버 모드로 설치). 자동 설치가 실패하면 출력을 읽고 원인을 보고하세요.
   NeoForge 가 새로 설치되면 user_jvm_args.txt 의 -Xmx 가 남아 있는지 확인하세요.
 - **되돌리기**: .update-backup/<시각>/ 의 파일을 제자리로 복사.
+- **월드 백업**: 서버시작.bat 이 서버를 켜기 전에 자동으로 한다 (바뀐 파일만 저장, 최근 backup.keep 개 보관).
+  월드를 되돌려야 하면 서버를 끄고 백업복원.bat. 백업을 다른 드라이브에 두려면 server-update.json 의
+  backup.dir 을 "D:/KubejsRPG-backup" 처럼 바꾼다 (기존 backups 폴더는 통째로 옮겨도 됨).
+  backups 폴더를 직접 정리하지 말 것 (오래된 백업은 자동으로 지워짐).
 `
 
 const README = `KubejsRPG 서버 키트
@@ -134,7 +148,7 @@ const README = `KubejsRPG 서버 키트
  2. 이 폴더 안의 파일을 서버 폴더에 복사합니다.
     새 서버라면 빈 폴더에 넣으면 됩니다. 서버시작.bat 을 실행하면 자바·NeoForge 서버·모드팩을 알아서 설치하고,
     마인크래프트 EULA 동의를 물어본 뒤 서버를 켭니다.
-    server-update.js / server-update.json / 서버시작.bat / 서버업데이트.bat / 미리보기.bat / CLAUDE.md
+    server-update.js / server-update.json / 서버시작.bat / 서버업데이트.bat / 미리보기.bat / 백업복원.bat / CLAUDE.md
  3. 서버를 run.bat 이 아닌 다른 방법으로 켠다면 server-update.json 의 "start" 를 그 명령으로 바꿉니다.
 
 처음 적용 전 (기존 서버에 처음 넣을 때):
@@ -145,6 +159,11 @@ const README = `KubejsRPG 서버 키트
  - 서버를 끄고(콘솔에 stop) 서버시작.bat 더블클릭 → 최신 패치를 받고 서버가 켜집니다.
  - 패치만 받고 싶으면 서버업데이트.bat, 바뀔 내용만 보려면 미리보기.bat.
  - 서버 컴의 Claude Code 는 CLAUDE.md 를 읽고 이 규칙대로 일합니다.
+
+월드 백업:
+ - 서버시작.bat 이 서버를 켜기 전에 월드를 자동 백업합니다 (처음만 오래 걸리고, 그다음부터는 바뀐 부분만).
+ - 되돌리려면 서버를 끄고 백업복원.bat → 번호 선택.
+ - 백업 위치/개수는 server-update.json 의 "backup" 에서 바꿉니다 ("dir": "D:/KubejsRPG-backup" 처럼 다른 드라이브 추천).
 
 주의:
  - server-update.json 에는 서버 스크립트를 푸는 키가 들어 있습니다. 다른 사람에게 주지 마세요.
@@ -160,10 +179,12 @@ function makeKit ({ out, repo, key, start = 'run.bat' }) {
   // 서버 쪽에서 바꿔 둔 start / keep 은 유지
   let prev = {}
   try { prev = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) } catch {}
-  fs.writeFileSync(cfgPath, JSON.stringify({ repo, key, start: prev.start || start, keep: prev.keep || [] }, null, 2))
+  // backup.dir 은 다른 드라이브(예: "D:/KubejsRPG-backup")로 바꿔도 된다
+  fs.writeFileSync(cfgPath, JSON.stringify({ repo, key, start: prev.start || start, keep: prev.keep || [], backup: prev.backup || { enabled: true, dir: 'backups', keep: 10 } }, null, 2))
   fs.writeFileSync(path.join(out, '서버시작.bat'), START_BAT.replace(/\n/g, '\r\n'))
   fs.writeFileSync(path.join(out, '서버업데이트.bat'), UPDATE_BAT.replace(/\n/g, '\r\n'))
   fs.writeFileSync(path.join(out, '미리보기.bat'), CHECK_BAT.replace(/\n/g, '\r\n'))
+  fs.writeFileSync(path.join(out, '백업복원.bat'), RESTORE_BAT.replace(/\n/g, '\r\n'))
   fs.writeFileSync(path.join(out, 'CLAUDE.md'), CLAUDE_MD)
   fs.writeFileSync(path.join(out, '읽어주세요.txt'), '﻿' + README.replace(/\n/g, '\r\n'))
   return out

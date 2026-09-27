@@ -6,7 +6,9 @@
 //
 //   node server-update.js            업데이트만
 //   node server-update.js --check    바뀔 내용만 보여주기 (아무것도 안 바꿈)
-//   node server-update.js --start    업데이트 후 서버 실행 (서버시작.bat 이 이걸 부름)
+//   node server-update.js --start    월드 백업 → 업데이트 → 서버 실행 (서버시작.bat 이 이걸 부름)
+//   node server-update.js --backup   월드 백업만
+//   node server-update.js --restore  백업 목록에서 골라 되돌리기 (백업복원.bat)
 //
 // server-update.json 의 "keep": ["kubejs/data/rpg/telemetry.json"] 처럼 적은 파일은
 // 서버에 있으면 절대 덮어쓰지 않는다 (서버가 직접 기록하는 데이터용)
@@ -25,6 +27,7 @@ const secret = require('../launcher/src/common/secret')
 const { validateManifest, matchesAny } = require('../launcher/src/common/manifest')
 const github = require('./lib/github')
 const setup = require('./lib/server-setup')
+const backup = require('./lib/backup')
 const { ADMIN_MANAGED } = require('./lib/server-files')
 
 const CONFIG_FILE = 'server-update.json'
@@ -175,6 +178,15 @@ async function main () {
   const start = process.argv.includes('--start')
   const check = process.argv.includes('--check')
 
+  if (process.argv.includes('--restore')) return restoreMenu(serverDir, cfg)
+
+  // 서버를 켜기 전에 월드 백업 (바뀐 파일만 저장하므로 보통 금방 끝남)
+  if (start || process.argv.includes('--backup')) {
+    const ok = await runBackup(serverDir, cfg)
+    if (!start) return process.exit(ok ? 0 : 1)
+    if (!ok && !yes(await ask('백업을 못 했습니다. 그래도 계속할까요? (y/n) '))) return process.exit(1)
+  }
+
   console.log(check ? '서버 패치 미리보기 (아무것도 바꾸지 않음)...' : '서버 패치 확인 중...')
   let failed = false
   let r = null
@@ -234,6 +246,45 @@ async function main () {
 
   console.log(`\n서버 시작: ${cfg.start || 'run.bat'}\n`)
   process.exit(await startServer(serverDir, cfg.start || 'run.bat', java && java.binDir))
+}
+
+async function runBackup (serverDir, cfg) {
+  const b = backup.DEFAULTS
+  const conf = { ...b, ...(cfg.backup || {}) }
+  if (!conf.enabled) return true
+  console.log(`월드 백업 중... (${path.resolve(serverDir, conf.dir)})`)
+  try {
+    const r = await backup.createBackup({ serverDir, config: cfg.backup, log: console.log })
+    console.log(`✔ 백업 ${r.name}: 월드 ${backup.formatSize(r.totalBytes)} 중 새로 저장 ${backup.formatSize(r.storedBytes)} (파일 ${r.storedFiles}개) · 최근 ${conf.keep}개 보관`)
+    return true
+  } catch (e) {
+    console.error(`✘ 백업 실패: ${e.message}`)
+    return false
+  }
+}
+
+async function restoreMenu (serverDir, cfg) {
+  const list = await backup.listBackups(serverDir, cfg.backup)
+  if (!list.length) {
+    console.log('백업이 없습니다.')
+    return process.exit(0)
+  }
+  console.log('서버가 꺼져 있는지 먼저 확인하세요.\n')
+  list.forEach((b, i) => console.log(`  ${String(i + 1).padStart(2)}. ${b.name}   (파일 ${b.fileCount}개, ${backup.formatSize(b.totalBytes)})`))
+  const n = Number(await ask('\n되돌릴 백업 번호 (그냥 Enter = 취소): '))
+  const pick = list[n - 1]
+  if (!pick) { console.log('취소했습니다.'); return process.exit(0) }
+  if (!yes(await ask(`${pick.name} 시점으로 월드를 되돌릴까요? 지금 월드는 지우지 않고 옆에 남겨 둡니다 (y/n) `))) {
+    console.log('취소했습니다.')
+    return process.exit(0)
+  }
+  const r = await backup.restoreBackup({ serverDir, config: cfg.backup, name: pick.name, log: console.log })
+  console.log(`✔ ${r.name} 로 되돌렸습니다 (파일 ${r.fileCount}개).`)
+  if (r.moved.length) {
+    console.log('  되돌리기 전 것은 이름을 바꿔 남겨 뒀습니다. 문제없으면 나중에 지워도 됩니다:')
+    for (const m of r.moved) console.log(`    ${m}`)
+  }
+  return process.exit(0)
 }
 
 if (require.main === module) {
