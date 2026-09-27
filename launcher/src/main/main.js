@@ -185,6 +185,22 @@ ipcMain.handle('launcher:update-install', async (_e, info) => {
   return true
 })
 
+// 공지 (notice.bat 으로 올린 notice.json). 없거나 못 받으면 null
+ipcMain.handle('notice:get', async () => {
+  const infoUrl = selfUpdate.infoUrlFrom(config)
+  if (!infoUrl) return null
+  try {
+    const url = new URL(infoUrl.replace(/launcher\.json$/, 'notice.json'))
+    url.searchParams.set('_', String(Date.now()))
+    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10000) })
+    if (!res.ok) return null
+    const n = await res.json()
+    return n && typeof n.text === 'string' && n.text.trim() ? { id: String(n.id || ''), text: n.text.trim(), level: n.level === 'warn' ? 'warn' : 'info' } : null
+  } catch {
+    return null
+  }
+})
+
 // 로그 공유: mclo.gs 에 올리고 링크를 클립보드에 복사
 let lastLaunchAt = 0
 ipcMain.handle('logs:share', async () => {

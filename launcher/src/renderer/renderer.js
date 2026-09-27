@@ -252,6 +252,20 @@ async function shareLog () {
   }
 }
 
+// 공지: 닫으면 같은 공지는 다시 안 뜸 (새 공지는 다시 뜸)
+let notice = null
+function dismissedNotice () {
+  try { return localStorage.getItem('notice-dismissed') } catch { return null }
+}
+async function refreshNotice () {
+  notice = await api.getNotice().catch(() => null)
+  const box = $('notice')
+  const show = notice && notice.id !== dismissedNotice()
+  box.classList.toggle('hidden', !show)
+  box.classList.toggle('warn', !!(show && notice.level === 'warn'))
+  if (show) $('notice-text').textContent = notice.text
+}
+
 // ---------------------------------------------------------------- actions
 
 async function login () {
@@ -346,6 +360,10 @@ dialog.addEventListener('close', async () => {
 
 $('open-folder-btn').addEventListener('click', () => api.open('instance'))
 $('share-log-btn').addEventListener('click', shareLog)
+$('notice-close').addEventListener('click', () => {
+  try { if (notice) localStorage.setItem('notice-dismissed', notice.id) } catch {}
+  $('notice').classList.add('hidden')
+})
 $('share-log-settings-btn').addEventListener('click', () => { dialog.close(); shareLog() })
 $('open-logs-btn').addEventListener('click', () => api.open('logs'))
 $('repair-btn').addEventListener('click', async () => {
@@ -408,9 +426,10 @@ async function boot () {
   account = info.account
   renderAccount()
   if (await updateLauncher()) return
+  refreshNotice()
   await check()
   // 런처를 켜 둔 채로 있어도 새 버전이 올라오면 알 수 있게 10분마다 확인
-  setInterval(() => { if (!busy && !gameRunning) check() }, 10 * 60 * 1000)
+  setInterval(() => { refreshNotice(); if (!busy && !gameRunning) check() }, 10 * 60 * 1000)
 }
 
 boot()

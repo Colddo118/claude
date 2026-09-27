@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('launcher', {
   onAccount: cb => subscribe('account', cb),
   serverStatus: () => ipcRenderer.invoke('server:status'),
   shareLog: () => ipcRenderer.invoke('logs:share'),
+  getNotice: () => ipcRenderer.invoke('notice:get'),
   checkLauncherUpdate: () => ipcRenderer.invoke('launcher:update-check'),
   installLauncherUpdate: info => ipcRenderer.invoke('launcher:update-install', info),
   windowControl: action => ipcRenderer.invoke('window:control', action),

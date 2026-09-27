@@ -123,4 +123,4 @@ if (require.main === module) {
     })
 }
 
-module.exports = { publishLauncher, packageTarget }
+module.exports = { publishLauncher, packageTarget, getOrCreateRelease, replaceAsset }

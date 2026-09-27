@@ -285,6 +285,19 @@ button.win.close::before {
 .pct { font: 700 18px/1 var(--bold); color: var(--on); min-width: calc(var(--u) * 12); text-align: right; }
 .pct:empty { display: none; }
 .install .share { align-self: flex-start; }
+/* 공지 = 제목 위 금색 띠 (강조 공지는 빨강) · 여러 줄 가능 · 오른쪽 닫기 */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--u) * 4);
+  margin-bottom: calc(var(--u) * 3);
+  padding: calc(var(--u) * 3) calc(var(--u) * 4);
+  background: rgba(232, 193, 112, .12);
+  border-left: calc(var(--u) * 2) solid var(--gold);
+}
+.notice p { flex: 1; min-width: 0; white-space: pre-line; overflow-wrap: anywhere; color: var(--text); user-select: text; }
+.notice.warn { background: rgba(255, 138, 122, .12); border-left-color: var(--red); }
+.notice .tab { flex: none; font-size: 18px; color: var(--dim); }
 .facts { margin: 0; display: grid; gap: var(--u); }
 .facts > div { display: flex; gap: calc(var(--u) * 3); }
 .facts dt { color: var(--dim); flex: none; min-width: calc(var(--u) * 12); }
