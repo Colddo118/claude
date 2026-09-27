@@ -18,6 +18,7 @@ const updater = require('../src/main/updater')
 let tmp, server, base
 const hits = []
 const api = []
+const modrinthIndex = {} // sha1 → 모드린스 버전 정보 (가짜)
 
 function write (root, rel, content) {
   const p = path.join(root, ...rel.split('/'))
@@ -33,6 +34,12 @@ before(async () => {
     let body = ''
     req.on('data', c => { body += c })
     req.on('end', () => {
+      // 가짜 모드린스 API: 해시로 파일 찾기
+      if (url.pathname === '/modrinth-api/v2/version_files') {
+        const { hashes } = JSON.parse(body)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        return res.end(JSON.stringify(Object.fromEntries(hashes.filter(h => modrinthIndex[h]).map(h => [h, modrinthIndex[h]]))))
+      }
       // 가짜 GitHub API
       if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/')) {
         api.push({ method: req.method, path: url.pathname, query: url.search, body })
@@ -60,6 +67,7 @@ before(async () => {
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${server.address().port}`
+  process.env.MODRINTH_API_URL = `${base}/modrinth-api`
 })
 
 after(async () => {
@@ -229,4 +237,28 @@ test('GitHub 업로드가 실패하면 로컬 기록은 이전 상태 그대로,
   assert.match(good.stdout, /pack-1\.0\.0 게시 완료/)
   const changelog = JSON.parse(read(out, 'manifest.json')).changelog.map(c => c.version)
   assert.deepEqual(changelog, ['1.0.0', '0.9.0'])
+})
+
+test('커스포지에 없는 모드는 모드린스에서 같은 파일(sha1)을 찾아 그 주소로 받는다', async () => {
+  const crypto = require('node:crypto')
+  const src = path.join(tmp, 'mr-src')
+  const out = path.join(tmp, 'mr-out')
+  write(src, 'pack.config.json', JSON.stringify({ github: 'me/modpack', minecraft: '1.21.1', loader: { type: 'neoforge', version: '21.1.248' } }))
+  write(src, 'mods/mowzies.jar', 'mowzie-bytes')   // 모드린스에 있음
+  write(src, 'mods/my-own-mod.jar', 'my-own-bytes') // 어디에도 없음 → 직접 올림
+  write(path.join(tmp, 'www'), 'mr/mowzies.jar', 'mowzie-bytes')
+  const sha1 = crypto.createHash('sha1').update('mowzie-bytes').digest('hex')
+  modrinthIndex[sha1] = { files: [{ hashes: { sha1 }, url: `${base}/mr/mowzies.jar`, primary: true }] }
+  process.env.GITHUB_WEB_URL = base
+  try {
+    const r = await build({ source: src, out, version: '1.0.0', notes: '' })
+    const byPath = Object.fromEntries(r.manifest.files.map(f => [f.path, f]))
+    assert.equal(byPath['mods/mowzies.jar'].url, `${base}/mr/mowzies.jar`)
+    assert.ok(!byPath['mods/my-own-mod.jar'].url || byPath['mods/my-own-mod.jar'].url.includes('/releases/'))
+    assert.equal(r.modrinthCount, 1)
+    assert.equal(r.cdnCount, 0)
+  } finally {
+    delete process.env.GITHUB_WEB_URL
+    delete modrinthIndex[sha1]
+  }
 })

@@ -18,6 +18,7 @@ const crypto = require('node:crypto')
 const { pipeline } = require('node:stream/promises')
 const { writeZip } = require('../launcher/src/common/zip')
 const { readCurseForgeFiles, cdnUrlFor, checkUrl } = require('./lib/curseforge')
+const modrinth = require('./lib/modrinth')
 const { groupFiles } = require('./lib/grouping')
 const { SERVER_DIRS, clientOnlyPatterns } = require('./lib/server-files')
 const secret = require('../launcher/src/common/secret')
@@ -58,7 +59,7 @@ const DEFAULT_CONFIG = {
   changelogLimit: 30
 }
 
-const FLAG_OPTIONS = ['force', 'help', 'publish', 'no-cdn', 'no-url-check']
+const FLAG_OPTIONS = ['force', 'help', 'publish', 'no-cdn', 'no-modrinth', 'no-url-check']
 const VALUE_OPTIONS = ['source', 'out', 'version', 'notes', 'notes-file', 'config', 'github']
 
 function parseArgs (argv) {
@@ -89,6 +90,7 @@ const USAGE = `사용법:
   --config        설정 파일. 생략하면 <source>/pack.config.json 을 찾는다
   --publish       GitHub 모드일 때 릴리스까지 자동으로 올린다 (GITHUB_TOKEN 환경변수 필요)
   --no-cdn        커스포지 CDN 을 쓰지 않고 모든 파일을 직접 올린다
+  --no-modrinth   커스포지에 없는 모드를 모드린스에서 찾지 않는다
   --no-url-check  CDN 주소 확인(HEAD 요청)을 건너뛴다
   --force         같은 버전으로 다시 빌드 허용`
 
@@ -318,6 +320,24 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     })
   }
 
+  // 커스포지에서 못 받는 모드·리소스팩은 모드린스에서 같은 파일(sha1)을 찾아 본다 (남의 모드를 GitHub 에 다시 올리지 않게)
+  let modrinthCount = 0
+  if (!flags['no-modrinth'] && config.useModrinth !== false) {
+    const lookFor = files.filter(f => !f.url && /^(mods|resourcepacks|shaderpacks)\/[^/]+\.(jar|zip)$/i.test(f.path))
+    if (lookFor.length) {
+      const found = await modrinth.lookupByHash(lookFor.map(f => f.sha1), { log: console.log })
+      const hits = lookFor.filter(f => found.has(f.sha1))
+      const ok = flags['no-url-check'] ? hits.map(() => true) : await mapLimit(hits, 8, f => checkUrl(found.get(f.sha1), f.size))
+      hits.forEach((f, i) => {
+        if (!ok[i]) return
+        f.url = found.get(f.sha1)
+        modrinthCount++
+        const k = cdnFailed.indexOf(f.path)
+        if (k >= 0) cdnFailed.splice(k, 1)
+      })
+    }
+  }
+
   await fsp.mkdir(outDir, { recursive: true })
   const selfHosted = files.filter(f => !f.url)
   const bundles = []
@@ -401,7 +421,8 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     reused: assets ? assets.reused() : 0,
     serverPackage,
     manifestFile,
-    cdnCount: files.length - selfHosted.length,
+    cdnCount: files.length - selfHosted.length - modrinthCount,
+    modrinthCount,
     cdnFailed,
     serverOnlyCount: serverOnlyFiles.length,
     serverDataFiles,
@@ -436,11 +457,12 @@ async function main () {
   console.log(`  - 서버 전용이라 배포에서 뺀 파일: ${r.serverOnlyCount}개 (${[...new Set(DEFAULT_CONFIG.serverOnly)].join(', ')} 등)`)
   if (r.serverDataFiles.length) console.log(`  - 서버 데이터(serverData)라 어디에도 배포 안 함: ${r.serverDataFiles.length}개`)
   console.log(`  - 커스포지 CDN 에서 받음: ${r.cdnCount}개`)
-  console.log(`  - 직접 올릴 파일: ${manifest.files.length - r.cdnCount}개 (${mb(r.selfHostedBytes)})`)
+  if (r.modrinthCount) console.log(`  - 모드린스에서 받음: ${r.modrinthCount}개`)
+  console.log(`  - 직접 올릴 파일: ${manifest.files.length - r.cdnCount - r.modrinthCount}개 (${mb(r.selfHostedBytes)})`)
   console.log('  폴더별 크기:')
   for (const [dir, size] of r.sizeByDir.slice(0, 8)) console.log(`    ${mb(size).padStart(10)}  ${dir}`)
   console.log('  가장 큰 파일:')
-  const source = f => !f.url ? '' : r.repo && f.url.startsWith(github.releaseDownloadPrefix(r.repo)) ? '  (GitHub)' : '  (CDN)'
+  const source = f => !f.url ? '' : r.repo && f.url.startsWith(github.releaseDownloadPrefix(r.repo)) ? '  (GitHub)' : /modrinth\.com\//.test(f.url) ? '  (모드린스)' : '  (CDN)'
   for (const f of r.largest) console.log(`    ${mb(f.size).padStart(10)}  ${f.path}${source(f)}`)
   if (r.cdnFailed.length) {
     console.log(`  ! CDN 주소 확인 실패로 직접 올리는 파일 ${r.cdnFailed.length}개: ${r.cdnFailed.slice(0, 5).join(', ')}${r.cdnFailed.length > 5 ? ' ...' : ''}`)

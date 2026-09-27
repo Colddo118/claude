@@ -35,6 +35,7 @@ before(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${server.address().port}`
   process.env.GITHUB_WEB_URL = base
+  process.env.MODRINTH_API_URL = `${base}/no-modrinth` // 모드린스 조회는 404 → 모두 직접 올림
 })
 
 after(() => {
