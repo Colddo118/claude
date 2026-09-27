@@ -284,6 +284,7 @@ button.win.close::before {
 .progress-row .progress { flex: 1; }
 .pct { font: 700 18px/1 var(--bold); color: var(--on); min-width: calc(var(--u) * 12); text-align: right; }
 .pct:empty { display: none; }
+.install .share { align-self: flex-start; }
 .facts { margin: 0; display: grid; gap: var(--u); }
 .facts > div { display: flex; gap: calc(var(--u) * 3); }
 .facts dt { color: var(--dim); flex: none; min-width: calc(var(--u) * 12); }
@@ -441,7 +442,7 @@ input[type=range]::-webkit-slider-thumb {
   outline-offset: calc(var(--u) * -1);
 }
 
-.settings-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(var(--u) * 2); }
+.settings-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: calc(var(--u) * 2); }
 .settings-actions button { padding: 0 calc(var(--u) * 2); font-size: 18px; }
 .dialog-buttons { display: flex; justify-content: flex-end; gap: calc(var(--u) * 4); }
 .dialog-buttons .primary { min-width: calc(var(--u) * 50); }

@@ -3,7 +3,7 @@
 const fs = require('node:fs')
 const fsp = fs.promises
 const path = require('node:path')
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, clipboard } = require('electron')
 const config = require('../../launcher.config.json')
 const updater = require('./updater')
 const { compareVersions } = require('../common/manifest')
@@ -11,6 +11,7 @@ const game = require('./game')
 const serversDat = require('./servers-dat')
 const { pingServer } = require('./server-status')
 const selfUpdate = require('./self-update')
+const logShare = require('./log-share')
 const { AccountStore, loginInteractive, getLaunchAuthorization } = require('./auth')
 
 const manifestUrl = process.env.MODPACK_MANIFEST_URL || config.manifestUrl
@@ -184,6 +185,22 @@ ipcMain.handle('launcher:update-install', async (_e, info) => {
   return true
 })
 
+// 로그 공유: mclo.gs 에 올리고 링크를 클립보드에 복사
+let lastLaunchAt = 0
+ipcMain.handle('logs:share', async () => {
+  const state = await updater.loadState(files.state)
+  const settings = await loadSettings()
+  const report = await logShare.buildReport({
+    instanceDir: dirs.instance,
+    launcherLog: path.join(dirs.logs, 'latest.log'),
+    since: lastLaunchAt ? lastLaunchAt - 5000 : 0,
+    info: { appName: config.appName, launcherVersion: app.getVersion(), packVersion: state.installedVersion, memoryMB: settings.memoryMB }
+  })
+  const url = await logShare.uploadReport(report.text)
+  clipboard.writeText(url)
+  return { url, crashReport: report.crashReport }
+})
+
 // 서버 켜짐/꺼짐 · 접속 인원 (모드팩 정보를 한 번이라도 받은 뒤에만)
 ipcMain.handle('server:status', async () => {
   const s = lastManifest && lastManifest.server
@@ -246,6 +263,8 @@ ipcMain.handle('game:launch', () => exclusive(async () => {
     await serversDat.ensureServer(dirs.instance, { name: config.appName, address: s.port ? `${s.address}:${s.port}` : s.address })
       .catch(e => console.error('서버 목록 등록 실패:', e.message))
   }
+
+  lastLaunchAt = Date.now()
 
   // 3) 자바/로더/바닐라 준비 후 실행
   const settings = await loadSettings()

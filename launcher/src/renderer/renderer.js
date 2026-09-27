@@ -236,6 +236,22 @@ async function refreshServer () {
   serverTimer = setTimeout(refreshServer, 30 * 1000) // 30초마다 다시 확인
 }
 
+// 로그를 mclo.gs 에 올리고 링크를 클립보드에 복사 (튕겼을 때 관리자에게 보내기용)
+async function shareLog () {
+  const btn = $('share-log-btn')
+  btn.disabled = true
+  setStatus('로그 올리는 중...')
+  try {
+    const r = await api.shareLog()
+    setStatus('로그 링크를 복사했어요', { detail: `관리자에게 붙여넣어 보내 주세요 · ${r.url}` })
+    btn.classList.add('hidden')
+  } catch (e) {
+    setStatus(cleanError(e), { error: true })
+  } finally {
+    btn.disabled = false
+  }
+}
+
 // ---------------------------------------------------------------- actions
 
 async function login () {
@@ -281,8 +297,9 @@ api.onGameExit(({ code, crashed }) => {
   gameRunning = false
   renderPlay()
   if (crashed) {
-    setStatus(`게임이 비정상 종료되었습니다 (코드 ${code}). 설정 → 로그 폴더 열기에서 latest.log 를 확인하세요.`, { error: true })
+    setStatus(`게임이 비정상 종료되었습니다 (코드 ${code}). 아래 버튼으로 로그 링크를 만들어 관리자에게 보내 주세요.`, { error: true })
     setProgress(0, 1)
+    $('share-log-btn').classList.remove('hidden')
   } else {
     check()
   }
@@ -328,6 +345,8 @@ dialog.addEventListener('close', async () => {
 })
 
 $('open-folder-btn').addEventListener('click', () => api.open('instance'))
+$('share-log-btn').addEventListener('click', shareLog)
+$('share-log-settings-btn').addEventListener('click', () => { dialog.close(); shareLog() })
 $('open-logs-btn').addEventListener('click', () => api.open('logs'))
 $('repair-btn').addEventListener('click', async () => {
   dialog.close()
