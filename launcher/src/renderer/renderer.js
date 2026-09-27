@@ -362,6 +362,23 @@ ui.logoutBtn.addEventListener('click', async () => {
 $('link-discord').addEventListener('click', () => api.open('discord'))
 $('link-website').addEventListener('click', () => api.open('website'))
 
+// 새 런처가 있으면 받아서 설치하고 이 창은 닫힌다 (설치가 끝나면 새 런처가 다시 켜짐)
+async function updateLauncher () {
+  const u = await api.checkLauncherUpdate().catch(() => null)
+  if (!u || !u.available) return false
+  busy = true
+  renderPlay()
+  setStatus(`런처 업데이트 v${u.version}`, { detail: '런처가 잠깐 꺼졌다가 1분 안팎 뒤 새 버전으로 다시 켜져요.' })
+  try {
+    await api.installLauncherUpdate(u)
+    return true
+  } catch (e) {
+    busy = false
+    setStatus(`런처 업데이트 실패: ${cleanError(e)}`, { error: true })
+    return false
+  }
+}
+
 async function boot () {
   info = await api.init()
   document.title = info.appName
@@ -371,6 +388,7 @@ async function boot () {
   $('link-website').classList.toggle('hidden', !info.links.website)
   account = info.account
   renderAccount()
+  if (await updateLauncher()) return
   await check()
   // 런처를 켜 둔 채로 있어도 새 버전이 올라오면 알 수 있게 10분마다 확인
   setInterval(() => { if (!busy && !gameRunning) check() }, 10 * 60 * 1000)

@@ -10,6 +10,7 @@ const { compareVersions } = require('../common/manifest')
 const game = require('./game')
 const serversDat = require('./servers-dat')
 const { pingServer } = require('./server-status')
+const selfUpdate = require('./self-update')
 const { AccountStore, loginInteractive, getLaunchAuthorization } = require('./auth')
 
 const manifestUrl = process.env.MODPACK_MANIFEST_URL || config.manifestUrl
@@ -164,6 +165,23 @@ ipcMain.handle('launcher:init', async () => ({
 ipcMain.handle('pack:check', async () => {
   const { manifest, state, plan } = await computePlan()
   return { ...summarize(manifest, state, plan), settings: await loadSettings() }
+})
+
+// 런처 자동 업데이트: 설치된 런처(개발 중 npm start 는 제외)만
+const launcherUpdateState = path.join(base, 'launcher-update.json')
+ipcMain.handle('launcher:update-check', async () => {
+  if (!app.isPackaged || process.platform !== 'win32') return { available: false, reason: 'dev' }
+  try {
+    return await selfUpdate.checkForUpdate({ infoUrl: selfUpdate.infoUrlFrom(config), currentVersion: app.getVersion(), stateFile: launcherUpdateState })
+  } catch (e) {
+    return { available: false, reason: e.message }
+  }
+})
+ipcMain.handle('launcher:update-install', async (_e, info) => {
+  if (gameProcess) throw new Error('게임이 실행 중이라 런처를 업데이트할 수 없습니다')
+  await selfUpdate.startUpdate({ setupUrl: info.setupUrl, version: info.version, tmpDir: path.join(app.getPath('temp'), 'kubejsrpg-launcher-update'), stateFile: launcherUpdateState })
+  setTimeout(() => app.quit(), 2500) // 안내 문구를 잠깐 보여 준 뒤 종료 → 설치 파일이 이어받아 새 런처를 켠다
+  return true
 })
 
 // 서버 켜짐/꺼짐 · 접속 인원 (모드팩 정보를 한 번이라도 받은 뒤에만)

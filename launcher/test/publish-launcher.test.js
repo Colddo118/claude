@@ -54,7 +54,11 @@ test('런처 올리기: 릴리스를 사전 배포로 만들고, 임시 이름�
     const r1 = await publishLauncher({ distDir: tmp, token: 't', verifyTries: 1 })
     assert.equal(release.prerelease, true) // releases/latest(모드팩)에 잡히면 안 됨
     assert.equal(release.make_latest, 'false')
-    assert.deepEqual(assets.map(a => a.name).sort(), ['KubejsRPG-Setup.exe', 'KubejsRPG-x64.nsis.7z'])
+    assert.deepEqual(assets.map(a => a.name).sort(), ['KubejsRPG-Setup.exe', 'KubejsRPG-x64.nsis.7z', 'launcher.json'])
+    assert.equal(JSON.parse(fs.readFileSync(path.join(tmp, 'launcher.json'), 'utf8')).version, version)
+    // 버전 정보는 맨 마지막에 올라간다 (본체보다 먼저 보이면 반쯤 올라간 런처를 받게 됨)
+    const uploads = calls.filter(c => c.startsWith('POST /uploads'))
+    assert.match(uploads[uploads.length - 1], /launcher\.json/)
     assert.equal(r1.version, version)
     assert.match(r1.setupUrl, /\/colddo118\/modpack\/releases\/download\/launcher\/KubejsRPG-Setup\.exe$/)
 
@@ -63,7 +67,7 @@ test('런처 올리기: 릴리스를 사전 배포로 만들고, 임시 이름�
     fs.writeFileSync(path.join(tmp, `modpack-launcher-${version}-x64.nsis.7z`), 'package-bytes-v2')
     calls.length = 0
     await publishLauncher({ distDir: tmp, token: 't', verifyTries: 1 })
-    assert.equal(assets.length, 2)
+    assert.equal(assets.length, 3)
     assert.ok(assets.every(a => !oldIds.includes(a.id)))
     assert.equal(assets.find(a => a.name === 'KubejsRPG-x64.nsis.7z').size, 'package-bytes-v2'.length)
     // 새 파일을 올린 다음에 예전 파일을 지운다 (도중에도 받을 수 있게)

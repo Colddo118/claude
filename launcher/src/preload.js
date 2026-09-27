@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('launcher', {
   onGameExit: cb => subscribe('game:exit', cb),
   onAccount: cb => subscribe('account', cb),
   serverStatus: () => ipcRenderer.invoke('server:status'),
+  checkLauncherUpdate: () => ipcRenderer.invoke('launcher:update-check'),
+  installLauncherUpdate: info => ipcRenderer.invoke('launcher:update-install', info),
   windowControl: action => ipcRenderer.invoke('window:control', action),
   onWindowState: cb => subscribe('window:state', cb)
 })

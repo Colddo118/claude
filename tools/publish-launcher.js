@@ -3,6 +3,7 @@
 
 // 런처 설치 패키지를 GitHub 릴리스에 올린다 (launcher.bat 에서 실행됨).
 //
+// 이미 설치된 런처는 launcher.json 의 버전을 보고 스스로 업데이트한다 (src/main/self-update.js).
 // 친구들에게 주는 KubejsRPG-Setup.exe 는 1MB 남짓한 "작은 설치 파일" 이고, 실행하면
 // launcher/package.json 의 nsisWeb.appPackageUrl 주소에서 런처 본체(약 100MB)를 받아 설치한다.
 // 그 주소는 버전과 상관없이 고정이라, 여기서 본체만 바꿔 올리면 예전에 나눠 준 설치 파일로도 최신 런처가 깔린다.
@@ -79,6 +80,10 @@ async function publishLauncher ({ distDir = path.join(LAUNCHER_DIR, 'dist', 'nsi
   const release = await getOrCreateRelease(token, target.repo, target.tag)
   const size = await replaceAsset(token, target.repo, release, pkgFile, target.packageName, log)
   await replaceAsset(token, target.repo, release, setupFile, SETUP_NAME, log)
+  // 설치된 런처들이 보는 버전 정보. 본체·설치 파일을 다 올린 뒤 마지막에 올려야 반쯤 올라간 걸 받지 않는다
+  const infoFile = path.join(distDir, 'launcher.json')
+  await fsp.writeFile(infoFile, JSON.stringify({ version: pkg.version, setup: SETUP_NAME, date: new Date().toISOString() }, null, 2))
+  await replaceAsset(token, target.repo, release, infoFile, 'launcher.json', log)
   const setupUrl = `${github.releaseDownloadPrefix(target.repo)}${target.tag}/${SETUP_NAME}`
   await github.api(token, 'PATCH', `${github.API()}/repos/${target.repo}/releases/${release.id}`, {
     name: `KubejsRPG 런처 v${pkg.version}`,
