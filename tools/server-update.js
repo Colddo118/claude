@@ -28,6 +28,7 @@ const { validateManifest, matchesAny } = require('../launcher/src/common/manifes
 const github = require('./lib/github')
 const setup = require('./lib/server-setup')
 const backup = require('./lib/backup')
+const maps = require('./lib/maps')
 const { ADMIN_MANAGED } = require('./lib/server-files')
 
 const CONFIG_FILE = 'server-update.json'
@@ -147,6 +148,18 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
     })
     if (!fs.existsSync(report.backupDir)) report.backupDir = null
   }
+  // 맵 패치 (관리자가 버전을 올린 차원만 통째로 교체)
+  report.maps = await maps.applyMaps({
+    serverDir,
+    manifest,
+    manifestUrl: url,
+    levelName: backup.levelName(serverDir),
+    decrypt: buf => secret.decrypt(buf, key),
+    check,
+    log,
+    downloadVerified: updater.downloadVerified,
+    extractFromBundle: updater.extractFromBundle
+  })
   try {
     report.loaderMissing = !setup.loaderInstalled(serverDir, manifest.loader)
   } catch {
@@ -207,6 +220,7 @@ async function main () {
       for (const p of r.protectedFiles) console.log(`  = 서버 데이터라 유지: ${p}`)
       console.log(`합계: 받을 파일 ${r.downloads.length}개, 지울 파일 ${r.removals.length}개, 보존 ${r.kept.length + r.protectedFiles.length}개`)
       if (r.loaderMissing) console.log(`• ${r.loader.type} ${r.loader.version} 서버가 아직 없습니다 → 실제 실행 때 자동 설치`)
+      for (const m of r.maps.filter(m => m.pending)) console.log(`• 맵 ${m.dimension} 을 v${m.version} 으로 교체 예정 (지금 차원은 .update-backup 으로 옮김)`)
       return process.exit(0)
     }
     if (!r.downloads.length && !r.removals.length) {
@@ -216,6 +230,7 @@ async function main () {
       for (const p of r.removals) console.log(`  - ${p}`)
       if (r.backupDir) console.log(`  이전 파일 백업: ${r.backupDir}`)
     }
+    for (const m of r.maps.filter(m => m.applied)) console.log(`✔ 맵 교체: ${m.dimension} → v${m.version} (파일 ${m.fileCount}개)`)
     if (r.protectedFiles.length) {
       console.log(`  서버에서 바뀐 데이터 파일 ${r.protectedFiles.length}개는 관리자 패치와 상관없이 그대로 뒀습니다:`)
       for (const p of r.protectedFiles) console.log(`    = ${p}`)

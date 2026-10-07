@@ -198,3 +198,72 @@ test('서버 키트 묶기: 윈도우(CRLF·BOM) 체크아웃에서도 shebang �
   assert.equal(r.status, 0, r.stderr)
   assert.equal(r.stdout.trim(), '42')
 })
+
+test('맵 패치: 싱글 월드의 차원을 서버 월드로 통째로 교체 (버전이 바뀔 때만, 원래 차원은 백업)', async () => {
+  const key = secret.newKey()
+  const src = path.join(tmp, 'map-instance')
+  const out = path.join(tmp, 'map-dist')
+  const srv = path.join(tmp, 'map-server')
+  const city = 'saves/CityDev/dimensions/kubejsrpg/city'
+  const mapCfg = version => JSON.stringify({ github: 'me/modpack', maps: [{ world: 'CityDev', dimension: 'kubejsrpg:city', version }] })
+
+  write(src, 'minecraftinstance.json', JSON.stringify({ gameVersion: '1.21.1', baseModLoader: { name: 'neoforge-21.1.77' } }))
+  write(src, 'pack.config.json', mapCfg(1))
+  write(src, 'mods/create.jar', 'create-v1')
+  write(src, 'kubejs/data/kubejsrpg/dimension/city.json', '{"type":"minecraft:overworld"}')
+  write(src, `${city}/region/r.0.0.mca`, 'CITY_REGION_v1')
+  write(src, `${city}/entities/r.0.0.mca`, 'CITY_NPCS_v1')
+  write(src, `${city}/poi/r.0.0.mca`, 'CITY_POI_v1')
+  write(src, 'saves/CityDev/region/r.0.0.mca', 'DEV_OVERWORLD') // 오버월드는 보내지 않음
+  write(src, 'saves/CityDev/level.dat', 'dev level')
+
+  const r1 = await build({ source: src, out, version: '3.0.0', notes: '', serverKey: key })
+  assert.deepEqual(r1.serverPackage.maps, [{ dimension: 'kubejsrpg:city', version: 1, fileCount: 3 }])
+  assert.ok(!r1.manifest.files.some(f => f.path.startsWith('saves/')))
+  for (const f of r1.newAssets) assert.ok(!fs.readFileSync(f).includes('CITY_REGION'), path.basename(f)) // 암호화
+  publishLocally(r1)
+
+  write(srv, 'server.properties', 'level-name=world\n')
+  write(srv, 'world/region/r.0.0.mca', 'PLAYER_OVERWORLD')
+  write(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca', 'OLD_CITY')
+  write(srv, 'libraries/net/neoforged/neoforge/21.1.77/neoforge-21.1.77-server.jar', 'x')
+  makeKit({ out: srv, repo: 'me/modpack', key })
+
+  const check = await runKit(srv, ['--check'])
+  assert.match(check.out, /맵 kubejsrpg:city 을 v1 으로 교체 예정/)
+  assert.equal(read(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca'), 'OLD_CITY')
+
+  const run1 = await runKit(srv)
+  assert.equal(run1.code, 0, run1.out)
+  assert.match(run1.out, /맵 교체: kubejsrpg:city → v1/)
+  assert.equal(read(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca'), 'CITY_REGION_v1')
+  assert.equal(read(srv, 'world/dimensions/kubejsrpg/city/entities/r.0.0.mca'), 'CITY_NPCS_v1')
+  assert.equal(read(srv, 'world/region/r.0.0.mca'), 'PLAYER_OVERWORLD') // 오버월드는 그대로
+  const backups = fs.readdirSync(path.join(srv, '.update-backup'))
+  const aside = backups.map(b => path.join(srv, '.update-backup', b, 'maps/world/dimensions/kubejsrpg/city/region/r.0.0.mca')).find(p => fs.existsSync(p))
+  assert.equal(fs.readFileSync(aside, 'utf8'), 'OLD_CITY')
+
+  // 같은 맵 버전으로 다시 패치: 차원 파일을 다시 올리지도, 서버에서 다시 바꾸지도 않는다
+  write(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca', 'PLAYER_CHANGED_CITY')
+  write(src, `${city}/region/r.0.0.mca`, 'CITY_REGION_v1_wip') // 관리자가 작업 중 (버전은 안 올림)
+  const r2 = await build({ source: src, out, version: '3.0.1', notes: '', serverKey: key })
+  assert.deepEqual(r2.newAssets.filter(f => /^s-/.test(path.basename(f))), []) // 암호화 묶음 새로 올린 것 없음 (맵은 3.0.0 것 재사용)
+  publishLocally(r2)
+  const run2 = await runKit(srv)
+  assert.equal(run2.code, 0, run2.out)
+  assert.doesNotMatch(run2.out, /맵 교체/)
+  assert.equal(read(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca'), 'PLAYER_CHANGED_CITY')
+
+  // 버전을 올리면 교체
+  write(src, 'pack.config.json', mapCfg(2))
+  write(src, `${city}/region/r.0.0.mca`, 'CITY_REGION_v2')
+  const r3 = await build({ source: src, out, version: '3.0.2', notes: '', serverKey: key })
+  publishLocally(r3)
+  const run3 = await runKit(srv)
+  assert.equal(run3.code, 0, run3.out)
+  assert.equal(read(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca'), 'CITY_REGION_v2')
+
+  // 오버월드는 지정할 수 없다
+  write(src, 'pack.config.json', JSON.stringify({ github: 'me/modpack', maps: [{ world: 'CityDev', dimension: 'minecraft:overworld', version: 1 }] }))
+  await assert.rejects(build({ source: src, out, version: '3.0.3', notes: '', serverKey: key }), /오버월드/)
+})

@@ -364,5 +364,6 @@ module.exports = {
   applyUpdate,
   sha1File,
   walkFiles,
-  downloadVerified
+  downloadVerified,
+  extractFromBundle
 }

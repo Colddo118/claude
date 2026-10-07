@@ -19,6 +19,7 @@ const { pipeline } = require('node:stream/promises')
 const { writeZip } = require('../launcher/src/common/zip')
 const { readCurseForgeFiles, cdnUrlFor, checkUrl } = require('./lib/curseforge')
 const modrinth = require('./lib/modrinth')
+const maps = require('./lib/maps')
 const { groupFiles } = require('./lib/grouping')
 const { SERVER_DIRS, clientOnlyPatterns } = require('./lib/server-files')
 const secret = require('../launcher/src/common/secret')
@@ -217,7 +218,7 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
  * - 서버 전용 파일(서버 스크립트·데이터)은 암호화 묶음(s-<sha1>.bin)으로 올린다
  * - 클라이언트 전용 모드는 뺀다
  */
-async function buildServerPackage ({ serverKey, included, clientFiles, clientBundles, sourceDir, outDir, releaseDir, addAsset, bundleLimit, userConfig, base }) {
+async function buildServerPackage ({ serverKey, included, clientFiles, clientBundles, sourceDir, outDir, releaseDir, addAsset, bundleLimit, userConfig, base, previousServer, log = () => {} }) {
   const clientOnly = clientOnlyPatterns(userConfig)
   const byPath = new Map(clientFiles.map(f => [f.path, f]))
   const files = []
@@ -247,13 +248,47 @@ async function buildServerPackage ({ serverKey, included, clientFiles, clientBun
     for (const f of g.files) f.bundle = id
   }
 
-  const serverManifest = { ...base, strictDirs: [], clientOnly, bundles, files }
+  // 맵 패치: 싱글 월드의 차원 폴더를 통째로 (버전이 바뀐 것만 새로 읽음)
+  const mapEntries = []
+  for (const m of userConfig.maps || []) {
+    maps.validateMapConfig(m)
+    const prev = previousServer && (previousServer.maps || []).find(p => p.dimension === m.dimension && p.world === m.world && p.version === m.version)
+    if (prev) {
+      for (const b of (previousServer.bundles || []).filter(b => prev.files.some(f => f.bundle === b.id))) {
+        if (!bundles.some(x => x.id === b.id)) bundles.push(b)
+      }
+      mapEntries.push(prev)
+      continue
+    }
+    const worldDir = path.join(sourceDir, 'saves', m.world)
+    if (!fs.existsSync(worldDir)) throw new Error(`맵 패치: 싱글 월드를 찾을 수 없습니다: saves/${m.world}`)
+    if (maps.isWorldOpen(worldDir)) throw new Error(`맵 패치: 싱글 월드 "${m.world}" 가 게임에서 열려 있습니다. 월드에서 나간 뒤 다시 patch.bat 하세요.`)
+    const { dimDir, files: dimFiles } = await maps.collectDimensionFiles(worldDir, m.dimension)
+    if (!dimFiles.length) throw new Error(`맵 패치: 차원 폴더가 비어 있습니다: ${path.relative(sourceDir, dimDir)} (차원 id ${m.dimension} 확인)`)
+    log(`  맵 패치 ${m.dimension} v${m.version}: 파일 ${dimFiles.length}개 묶는 중...`)
+    const entries = []
+    for (const f of dimFiles) entries.push({ path: f.path, abs: f.abs, sha1: await sha1File(f.abs), size: (await fsp.stat(f.abs)).size })
+    const tmpMap = path.join(releaseDir, '.building-map.zip')
+    for (const g of groupFiles(entries, bundleLimit)) {
+      await writeZip(tmpMap, g.files.map(f => ({ name: f.path, file: f.abs })))
+      const sealed = secret.encrypt(await fsp.readFile(tmpMap), serverKey)
+      await fsp.rm(tmpMap, { force: true })
+      const sha1 = require('node:crypto').createHash('sha1').update(sealed).digest('hex')
+      const url = await addAsset(`s:${sha1}`, `s-${sha1}.bin`, sealed.length, dest => fsp.writeFile(dest, sealed))
+      const id = `map:${m.dimension}:${g.id}`
+      bundles.push({ id, url, sha1, size: sealed.length, enc: true })
+      for (const f of g.files) f.bundle = id
+    }
+    mapEntries.push({ world: m.world, dimension: m.dimension, version: m.version, files: entries.map(({ path: p, sha1, size, bundle }) => ({ path: p, sha1, size, bundle })) })
+  }
+
+  const serverManifest = { ...base, strictDirs: [], clientOnly, bundles, files, ...(mapEntries.length ? { maps: mapEntries } : {}) }
   validateManifest(serverManifest)
   // 다음 빌드에서 재사용 판단용 (로컬에만 보관, 업로드는 암호화본만)
   await fsp.writeFile(path.join(outDir, 'server-manifest.json'), JSON.stringify(serverManifest, null, 2))
   const binFile = path.join(releaseDir, 'server-manifest.bin')
   await fsp.writeFile(binFile, secret.encrypt(Buffer.from(JSON.stringify(serverManifest)), serverKey))
-  return { binFile, fileCount: files.length, secretCount: secretFiles.length }
+  return { binFile, fileCount: files.length, secretCount: secretFiles.length, maps: mapEntries.map(m => ({ dimension: m.dimension, version: m.version, fileCount: m.files.length })) }
 }
 
 function nextVersion (v) {
@@ -395,7 +430,9 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   if (mode === 'github' && serverKey) {
     serverPackage = await buildServerPackage({
       serverKey, included, clientFiles: files, clientBundles: bundles, sourceDir, outDir, releaseDir,
-      addAsset: assets.addAsset, bundleLimit, userConfig, base
+      addAsset: assets.addAsset, bundleLimit, userConfig, base,
+      previousServer: await readJsonIfExists(path.join(outDir, 'server-manifest.json')),
+      log: flags.quiet ? () => {} : console.log
     })
     newAssets.push(serverPackage.binFile)
   }
@@ -464,6 +501,9 @@ async function main () {
   console.log('  가장 큰 파일:')
   const source = f => !f.url ? '' : r.repo && f.url.startsWith(github.releaseDownloadPrefix(r.repo)) ? '  (GitHub)' : /modrinth\.com\//.test(f.url) ? '  (모드린스)' : '  (CDN)'
   for (const f of r.largest) console.log(`    ${mb(f.size).padStart(10)}  ${f.path}${source(f)}`)
+  for (const m of (r.serverPackage && r.serverPackage.maps) || []) {
+    console.log(`  - 맵 패치 ${m.dimension} v${m.version}: 파일 ${m.fileCount}개 (서버 전용, 암호화 · 버전이 바뀌었을 때만 서버가 교체)`)
+  }
   if (r.cdnFailed.length) {
     console.log(`  ! CDN 주소 확인 실패로 직접 올리는 파일 ${r.cdnFailed.length}개: ${r.cdnFailed.slice(0, 5).join(', ')}${r.cdnFailed.length > 5 ? ' ...' : ''}`)
   }

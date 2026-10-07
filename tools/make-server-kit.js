@@ -134,6 +134,9 @@ const CLAUDE_MD = `# 이 폴더: KubejsRPG 마인크래프트 서버 (NeoForge)
   공식 설치 파일을 받아 서버 모드로 설치). 자동 설치가 실패하면 출력을 읽고 원인을 보고하세요.
   NeoForge 가 새로 설치되면 user_jvm_args.txt 의 -Xmx 가 남아 있는지 확인하세요.
 - **되돌리기**: .update-backup/<시각>/ 의 파일을 제자리로 복사.
+- **맵 패치**: 관리자가 pack.config.json 의 maps 버전을 올리면, 패치 때 그 차원(예: 도시 차원) 폴더만 통째로 교체된다.
+  원래 차원은 .update-backup/<시각>/maps/ 로 옮겨진다. .map-state.json 은 적용한 맵 버전 기록이니 고치지 말 것.
+  메인 오버월드는 맵 패치 대상이 아니다.
 - **월드 백업**: 서버시작.bat 이 서버를 켜기 전에 자동으로 한다 (바뀐 파일만 저장, 최근 backup.keep 개 보관).
   월드를 되돌려야 하면 서버를 끄고 백업복원.bat. 백업을 다른 드라이브에 두려면 server-update.json 의
   backup.dir 을 "D:/KubejsRPG-backup" 처럼 바꾼다 (기존 backups 폴더는 통째로 옮겨도 됨).
