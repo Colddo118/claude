@@ -171,6 +171,17 @@ test('서버 패키지: 암호화 배포와 서버 키트 원클릭 업데이트
   // 월드는 처음부터 끝까지 그대로
   assert.equal(read(srv, 'world/level.dat'), 'world')
 
+  // 관리자 컴의 배포 폴더(pack-dist-gh)가 통째로 사라져도: GitHub 의 최신 기록을 이어 쓴다
+  fs.rmSync(out, { recursive: true, force: true })
+  await assert.rejects(build({ source: src, out, version: '1.0.4', notes: '-', serverKey: key, quiet: true }), /이미 1\.0\.4/)
+  const r7 = await build({ source: src, out, version: '1.0.5', notes: '- 폴더 복구 후', serverKey: key, quiet: true })
+  assert.deepEqual(r7.manifest.changelog.slice(0, 3).map(c => c.version), ['1.0.5', '1.0.4', '1.0.3'])
+  assert.deepEqual(r7.newAssets.map(f => path.basename(f)).sort(), ['manifest.json', 'server-manifest.bin']) // 바뀐 게 없으니 전부 재사용
+  publishLocally(r7)
+  const u7 = await runKit(srv)
+  assert.equal(u7.code, 0, u7.out)
+  assert.equal(read(srv, 'kubejs/server_scripts/recipes.js'), 'SECRET_RECIPE_v2')
+
   // 키가 틀리면 명확한 오류
   write(srv, 'server-update.json', JSON.stringify({ repo: 'me/modpack', key: secret.newKey() }))
   const bad = await runKit(srv)

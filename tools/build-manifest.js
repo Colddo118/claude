@@ -142,6 +142,40 @@ async function readJsonIfExists (file) {
   }
 }
 
+// 배포 폴더(pack-dist-gh)를 잃어버렸을 때: GitHub 에 올라가 있는 최신 버전 기록을 대신 쓴다.
+// (패치노트 기록과 바뀌지 않은 파일 재사용이 끊기지 않게. 못 받으면 처음 배포처럼 진행)
+async function fetchLatestAsset (repo, name) {
+  try {
+    const res = await fetch(`${github.manifestUrl(repo).replace(/manifest\.json$/, '')}${name}`, { signal: AbortSignal.timeout(30000) })
+    if (!res.ok) return null
+    return Buffer.from(await res.arrayBuffer())
+  } catch {
+    return null
+  }
+}
+
+async function remotePrevious ({ repo, outDir, serverKey, log }) {
+  let previous = await readJsonIfExists(path.join(outDir, 'manifest.json'))
+  let previousServer = await readJsonIfExists(path.join(outDir, 'server-manifest.json'))
+  if (!previous) {
+    const buf = await fetchLatestAsset(repo, 'manifest.json')
+    try { previous = buf && JSON.parse(buf.toString('utf8')) } catch { previous = null }
+    if (previous) log(`  (로컬 배포 기록이 없어 GitHub 의 v${previous.version} 기록을 이어서 씁니다)`)
+  }
+  if (!previousServer && previous && serverKey) {
+    const buf = await fetchLatestAsset(repo, 'server-manifest.bin')
+    if (buf) {
+      try {
+        previousServer = JSON.parse(secret.decrypt(buf, serverKey).toString('utf8'))
+      } catch {
+        // 키가 바뀌었으면 이전 서버 패키지를 못 연다 → 서버 전용 파일은 새로 올린다 (서버 키트도 다시 복사해야 함)
+        log('  ! 이전 서버 패키지를 지금 서버 키로 열 수 없습니다. 서버 전용 파일을 새로 올립니다 (서버 키트 다시 복사 필요).')
+      }
+    }
+  }
+  return { previous, previousServer }
+}
+
 async function mapLimit (items, limit, fn) {
   const out = new Array(items.length)
   let next = 0
@@ -316,7 +350,10 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     throw new Error('마인크래프트/로더 버전을 알 수 없습니다. pack.config.json 에 "minecraft" 와 "loader" 를 적어주세요.')
   }
 
-  const previous = await readJsonIfExists(path.join(outDir, 'manifest.json'))
+  const log = flags.quiet ? () => {} : console.log
+  const { previous, previousServer } = mode === 'github' && flags['remote-previous'] !== false
+    ? await remotePrevious({ repo, outDir, serverKey, log })
+    : { previous: await readJsonIfExists(path.join(outDir, 'manifest.json')), previousServer: await readJsonIfExists(path.join(outDir, 'server-manifest.json')) }
   if (previous && previous.version === version && !force) {
     // 빌드는 됐지만 업로드가 실패해서 GitHub 에 없는 버전이면 같은 번호로 다시 해도 된다
     const unpublished = mode === 'github' && flags.publish && !(await checkUrl(github.assetUrl(repo, version, 'manifest.json')))
@@ -384,8 +421,7 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   const bundleLimit = config.bundleSizeMB ? config.bundleSizeMB * MB : BUNDLE_LIMIT
   if (mode === 'github') {
     assets = await buildGithubAssets({
-      repo, version, sourceDir, outDir, previous, selfHosted, bundles, newAssets, bundleLimit,
-      previousServer: await readJsonIfExists(path.join(outDir, 'server-manifest.json')),
+      repo, version, sourceDir, outDir, previous, previousServer, selfHosted, bundles, newAssets, bundleLimit,
       largeFile: config.largeFileMB ? config.largeFileMB * MB : LARGE_FILE
     })
     releaseDir = assets.releaseDir
@@ -430,9 +466,7 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   if (mode === 'github' && serverKey) {
     serverPackage = await buildServerPackage({
       serverKey, included, clientFiles: files, clientBundles: bundles, sourceDir, outDir, releaseDir,
-      addAsset: assets.addAsset, bundleLimit, userConfig, base,
-      previousServer: await readJsonIfExists(path.join(outDir, 'server-manifest.json')),
-      log: flags.quiet ? () => {} : console.log
+      addAsset: assets.addAsset, bundleLimit, userConfig, base, previousServer, log
     })
     newAssets.push(serverPackage.binFile)
   }

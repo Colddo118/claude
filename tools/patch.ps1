@@ -76,8 +76,29 @@ if (-not $settings.instance -or -not (Test-Path $settings.instance)) {
   if (-not (Test-Path $settings.instance)) { throw "인스턴스 폴더가 없습니다: $($settings.instance)" }
 }
 if (-not $settings.serverKey) {
-  $settings.serverKey = (& node -e "console.log(require(process.argv[1]).newKey())" (Join-Path $Root 'launcher\src\common\secret.js')).Trim()
-  Write-Host '서버 키를 새로 만들었습니다 (서버 스크립트 암호화용).' -ForegroundColor DarkGray
+  # 패치기 폴더를 잃어버렸으면, 서버 컴의 server-update.json 에 있는 "key" 를 그대로 쓰면 서버 키트를 다시 안 깔아도 된다.
+  Write-Host ''
+  Write-Host '서버 키(서버 스크립트 암호화용)가 없습니다.' -ForegroundColor Yellow
+  Write-Host ' - 이미 서버를 운영 중이면: 서버 폴더 server-update.json 의 "key" 값을 붙여넣으세요 (마우스 오른쪽 클릭 → Enter)'
+  Write-Host ' - 처음이면 그냥 Enter → 새로 만듭니다 (이 경우 서버 키트를 서버 폴더에 다시 복사해야 함)'
+  for ($i = 0; $i -lt 3 -and -not $settings.serverKey; $i++) {
+    $entered = (Plain (Read-Host '서버 키 (화면엔 * 만 보임)' -AsSecureString)).Trim().Trim('"')
+    if (-not $entered) {
+      $settings.serverKey = (& node -e "console.log(require(process.argv[1]).newKey())" (Join-Path $Root 'launcher\src\common\secret.js')).Trim()
+      Write-Host '서버 키를 새로 만들었습니다. 이번 배포 후 서버 키트를 서버 폴더에 다시 복사하세요.' -ForegroundColor Yellow
+      break
+    }
+    $ok = $false
+    try { $ok = ([Convert]::FromBase64String($entered)).Length -eq 32 } catch { $ok = $false }
+    if ($ok) {
+      $settings.serverKey = $entered
+      Write-Host '기존 서버 키를 저장했습니다.' -ForegroundColor DarkGray
+    } else {
+      Write-Host "서버 키 모양이 아닙니다 (입력된 글자 수: $($entered.Length)). = 로 끝나는 44글자입니다." -ForegroundColor Yellow
+    }
+    $entered = $null
+  }
+  if (-not $settings.serverKey) { throw '서버 키를 받지 못했습니다. patch.bat 을 다시 실행하세요.' }
 }
 Save-Settings $settings
 
