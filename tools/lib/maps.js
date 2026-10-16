@@ -93,7 +93,12 @@ async function applyMaps ({ serverDir, manifest, manifestUrl, levelName, decrypt
     try {
       for (const b of (manifest.bundles || []).filter(b => m.files.some(f => f.bundle === b.id))) {
         const zipFile = path.join(tmpDir, `${b.sha1}.bin`)
-        await downloadVerified({ url: new URL(b.url, manifestUrl).toString(), dest: zipFile, sha1: b.sha1, size: b.size })
+        const url = new URL(b.url, manifestUrl).toString()
+        try {
+          await downloadVerified({ url, dest: zipFile, sha1: b.sha1, size: b.size })
+        } catch (e) {
+          throw new Error(`${e.message} — 맵 묶음 ${b.id} (${url.split('/').slice(-2).join('/')})`)
+        }
         let buf = await fsp.readFile(zipFile)
         if (b.enc) buf = decrypt(buf)
         await extractFromBundle(buf, m.files.filter(f => f.bundle === b.id), incoming, async () => {})

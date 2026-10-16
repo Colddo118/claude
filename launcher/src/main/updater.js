@@ -327,7 +327,13 @@ async function applyUpdate ({ manifest, manifestUrl, instanceDir, stateFile, sta
     // 묶음 여러 개를 동시에 받는다 (하나씩 받으면 첫 설치가 오래 걸림)
     await runPool((manifest.bundles || []).filter(b => bundled.some(f => f.bundle === b.id)), Math.min(concurrency, 4), async b => {
       const zipFile = path.join(instanceDir, '.launcher-tmp', b.sha1, 'bundle.zip')
-      await downloadVerified({ url: new URL(b.url, manifestUrl).toString(), dest: zipFile, sha1: b.sha1, size: b.size, signal, onBytes })
+      const url = new URL(b.url, manifestUrl).toString()
+      try {
+        await downloadVerified({ url, dest: zipFile, sha1: b.sha1, size: b.size, signal, onBytes })
+      } catch (e) {
+        // 어떤 묶음인지 알아야 관리자가 고칠 수 있다 (예: 릴리스 pack-7.0.0 의 s-1234.bin)
+        throw new Error(`${e.message} — 묶음 ${b.id} (${url.split('/').slice(-2).join('/')})`)
+      }
       try {
         let zipBuf = await fsp.readFile(zipFile)
         if (b.enc) {

@@ -194,10 +194,12 @@ test('GitHub 릴리스 자동 게시: 초안 → 파일 첨부 → 공개 순서
   write(tmp, 'manifest.json', '{}')
   api.length = 0
   await publishRelease({ repo: 'me/modpack', token: 't', version: '2.0.0', notes: '- 노트', files: [zip, man] })
-  assert.deepEqual(api.map(a => `${a.method} ${a.path}${a.query}`), [
+  // 파일은 동시에 올리므로 도착 순서는 상관없다. 초안 만들기가 먼저, 공개가 맨 마지막이면 된다
+  const calls = api.map(a => `${a.method} ${a.path}${a.query}`)
+  assert.deepEqual([calls[0], ...calls.slice(1, -1).sort(), calls.at(-1)], [
     'POST /api/repos/me/modpack/releases',
-    'POST /uploads/repos/me/modpack/releases/7/assets?name=pack-2.0.0.zip',
     'POST /uploads/repos/me/modpack/releases/7/assets?name=manifest.json',
+    'POST /uploads/repos/me/modpack/releases/7/assets?name=pack-2.0.0.zip',
     'PATCH /api/repos/me/modpack/releases/7'
   ])
   assert.deepEqual(JSON.parse(api[0].body), { tag_name: 'pack-2.0.0', name: '모드팩 v2.0.0', body: '- 노트', draft: true })

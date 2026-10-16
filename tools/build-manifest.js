@@ -364,11 +364,15 @@ async function buildServerPackage ({ serverKey, included, clientFiles, clientBun
     maps.validateMapConfig(m)
     const prev = previousServer && (previousServer.maps || []).find(p => p.dimension === m.dimension && p.world === m.world && p.version === m.version)
     if (prev) {
-      for (const b of (previousServer.bundles || []).filter(b => prev.files.some(f => f.bundle === b.id))) {
-        if (!bundles.some(x => x.id === b.id)) bundles.push(b)
+      // 이전에 올린 맵 묶음이 GitHub 에 실제로 다 있을 때만 재사용 (업로드가 중간에 끊겼던 배포면 다시 묶어 올림)
+      const prevBundles = (previousServer.bundles || []).filter(b => prev.files.some(f => f.bundle === b.id))
+      const alive = await mapLimit(prevBundles, 8, b => !b.url.startsWith(thisRelease || '\0') && checkUrl(b.url, b.size))
+      if (prevBundles.length && alive.every(Boolean)) {
+        for (const b of prevBundles) if (!bundles.some(x => x.id === b.id)) bundles.push(b)
+        mapEntries.push(prev)
+        continue
       }
-      mapEntries.push(prev)
-      continue
+      log(`  맵 패치 ${m.dimension}: 이전에 올린 맵 파일이 GitHub 에 없어 다시 묶어 올립니다`)
     }
     const worldDir = path.join(sourceDir, 'saves', m.world)
     if (!fs.existsSync(worldDir)) throw new Error(`맵 패치: 싱글 월드를 찾을 수 없습니다: saves/${m.world}`)
@@ -397,7 +401,31 @@ async function buildServerPackage ({ serverKey, included, clientFiles, clientBun
   await fsp.writeFile(path.join(outDir, 'server-manifest.json'), JSON.stringify({ ...serverManifest, keyCheck: keyCheck(serverKey) }, null, 2))
   const binFile = path.join(releaseDir, 'server-manifest.bin')
   await fsp.writeFile(binFile, secret.encrypt(Buffer.from(JSON.stringify(serverManifest)), serverKey))
-  return { binFile, fileCount: files.length, secretCount: secretFiles.length, maps: mapEntries.map(m => ({ dimension: m.dimension, version: m.version, fileCount: m.files.length })) }
+  return { manifest: serverManifest, binFile, fileCount: files.length, secretCount: secretFiles.length, maps: mapEntries.map(m => ({ dimension: m.dimension, version: m.version, fileCount: m.files.length })) }
+}
+
+/**
+ * 배포 전 점검: 친구용·서버용 목록이 가리키는 GitHub 파일이 전부 받을 수 있는 상태인지.
+ * - 이번 릴리스 주소면 이번에 올릴 파일 안에 있어야 하고
+ * - 예전 릴리스 주소면 지금 실제로 받을 수 있어야 한다
+ * 하나라도 아니면 올리지 않고 멈춘다 (서버·친구가 404 를 받는 일이 없게).
+ */
+async function verifyReferences ({ manifests, thisRelease, newAssets }) {
+  const names = new Set(newAssets.map(f => path.basename(f)))
+  const refs = new Map()
+  for (const m of manifests) {
+    for (const b of m.bundles || []) refs.set(b.url, { url: b.url, size: b.size, what: `묶음 ${b.id}` })
+    for (const f of m.files || []) if (f.url && !f.bundle && f.url.startsWith(thisRelease.replace(/[^/]+\/$/, ''))) refs.set(f.url, { url: f.url, size: f.size, what: f.path })
+  }
+  const list = [...refs.values()]
+  const ok = await mapLimit(list, 8, r => r.url.startsWith(thisRelease)
+    ? names.has(decodeURIComponent(r.url.slice(thisRelease.length)))
+    : checkUrl(r.url, r.size))
+  const missing = list.filter((_, i) => !ok[i])
+  if (missing.length) {
+    throw new Error(`배포 전 점검 실패: 받을 수 없는 파일 ${missing.length}개 → 올리지 않았습니다.\n` +
+      missing.slice(0, 10).map(r => `    ${r.what}: ${r.url.split('/').slice(-2).join('/')}`).join('\n'))
+  }
 }
 
 function nextVersion (v) {
@@ -554,6 +582,10 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     newAssets.push(serverPackage.binFile)
   }
   await hashes.save()
+  if (releaseDir && !flags['no-url-check']) {
+    await verifyReferences({ manifests: [manifest, serverPackage && serverPackage.manifest].filter(Boolean), thisRelease: assets.thisRelease, newAssets })
+    lap('배포 전 점검')
+  }
 
   // 어디가 큰지 보여주기 위한 요약: 폴더별 합계, 가장 큰 파일
   const byDir = {}

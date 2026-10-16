@@ -283,3 +283,32 @@ test('맵 패치: 싱글 월드의 차원을 서버 월드로 통째로 교체 (
   write(src, 'pack.config.json', JSON.stringify({ github: 'me/modpack', maps: [{ world: 'CityDev', dimension: 'minecraft:overworld', version: 1 }] }))
   await assert.rejects(build({ source: src, out, version: '3.0.3', notes: '', serverKey: key }), /오버월드/)
 })
+
+test('맵 패치: 업로드가 중간에 끊긴 뒤 다시 배포해도 서버가 없는 맵 파일을 받으러 가지 않는다', async () => {
+  const key = secret.newKey()
+  const src = path.join(tmp, 'map2-instance')
+  const out = path.join(tmp, 'map2-dist')
+  const srv = path.join(tmp, 'map2-server')
+  const city = 'saves/CityDev/dimensions/kubejsrpg/town'
+  write(src, 'minecraftinstance.json', JSON.stringify({ gameVersion: '1.21.1', baseModLoader: { name: 'neoforge-21.1.77' } }))
+  write(src, 'pack.config.json', JSON.stringify({ github: 'me/town', maps: [{ world: 'CityDev', dimension: 'kubejsrpg:town', version: 1 }] }))
+  write(src, 'mods/create.jar', 'create-v1')
+  write(src, `${city}/region/r.0.0.mca`, 'TOWN_v1')
+  write(src, 'saves/CityDev/level.dat', 'dev level')
+
+  // 4.0.0 은 만들어졌지만 업로드 도중 창을 닫음 → GitHub 에 없음
+  await build({ source: src, out, version: '4.0.0', notes: '', serverKey: key, quiet: true })
+  // 다음 배포 (맵 버전은 그대로)
+  const r = await build({ source: src, out, version: '4.0.1', notes: '', serverKey: key, quiet: true })
+  const relDir = path.join(tmp, 'www', 'me', 'town', 'releases', 'download', 'pack-4.0.1')
+  fs.mkdirSync(relDir, { recursive: true })
+  for (const f of r.newAssets) fs.copyFileSync(f, path.join(relDir, path.basename(f)))
+  for (const name of ['manifest.json', 'server-manifest.bin']) write(path.join(tmp, 'www'), `me/town/releases/latest/download/${name}`, fs.readFileSync(path.join(relDir, name)))
+
+  write(srv, 'server.properties', 'level-name=world\n')
+  write(srv, 'libraries/net/neoforged/neoforge/21.1.77/neoforge-21.1.77-server.jar', 'x')
+  makeKit({ out: srv, repo: 'me/town', key })
+  const run = await runKit(srv)
+  assert.equal(run.code, 0, run.out)
+  assert.equal(read(srv, 'world/dimensions/kubejsrpg/town/region/r.0.0.mca'), 'TOWN_v1')
+})
