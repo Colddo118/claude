@@ -312,3 +312,60 @@ test('맵 패치: 업로드가 중간에 끊긴 뒤 다시 배포해도 서버�
   assert.equal(run.code, 0, run.out)
   assert.equal(read(srv, 'world/dimensions/kubejsrpg/town/region/r.0.0.mca'), 'TOWN_v1')
 })
+
+test('배포 점검: 서버용 목록이 가리키는 파일이 GitHub 에 없으면 찾아내고, 내 컴에 있으면 다시 올린다', async () => {
+  const { checkRelease } = require('../../tools/check-release')
+  const key = secret.newKey()
+  const src = path.join(tmp, 'chk-instance')
+  const out = path.join(tmp, 'chk-dist')
+  write(src, 'minecraftinstance.json', JSON.stringify({ gameVersion: '1.21.1', baseModLoader: { name: 'neoforge-21.1.77' } }))
+  write(src, 'pack.config.json', JSON.stringify({ github: 'me/chk' }))
+  write(src, 'mods/create.jar', 'create-v1')
+  write(src, 'kubejs/server_scripts/a.js', 'SECRET')
+  const r = await build({ source: src, out, version: '1.0.0', notes: '', serverKey: key, quiet: true })
+  const relDir = path.join(tmp, 'www', 'me', 'chk', 'releases', 'download', 'pack-1.0.0')
+  fs.mkdirSync(relDir, { recursive: true })
+  for (const f of r.newAssets) fs.copyFileSync(f, path.join(relDir, path.basename(f)))
+  for (const name of ['manifest.json', 'server-manifest.bin']) write(path.join(tmp, 'www'), `me/chk/releases/latest/download/${name}`, fs.readFileSync(path.join(relDir, name)))
+
+  const quiet = () => {}
+  assert.equal((await checkRelease({ repo: 'me/chk', serverKey: key, outDir: out, log: quiet })).missing.length, 0)
+
+  // 서버 전용 암호화 묶음 하나가 GitHub 에서 사라짐
+  const lost = fs.readdirSync(relDir).find(n => /^s-.*\.bin$/.test(n))
+  fs.rmSync(path.join(relDir, lost))
+  const found = await checkRelease({ repo: 'me/chk', serverKey: key, outDir: out, log: quiet })
+  assert.equal(found.missing.length, 1)
+  assert.match(found.missing[0].what, /서버용 묶음 server:/)
+
+  // 다시 올리기 (가짜 GitHub API)
+  const api = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', c => chunks.push(c))
+    req.on('end', () => {
+      const u = new URL(req.url, 'http://x')
+      res.setHeader('Content-Type', 'application/json')
+      if (req.method === 'GET' && u.pathname === '/repos/me/chk/releases/tags/pack-1.0.0') {
+        return res.end(JSON.stringify({ id: 1, assets: [], upload_url: `http://127.0.0.1:${api.address().port}/upload{?name,label}` }))
+      }
+      if (req.method === 'POST' && u.pathname === '/upload') {
+        fs.writeFileSync(path.join(relDir, u.searchParams.get('name')), Buffer.concat(chunks))
+        res.statusCode = 201
+        return res.end('{}')
+      }
+      res.statusCode = 404
+      res.end('{"message":"nope"}')
+    })
+  })
+  await new Promise(resolve => api.listen(0, '127.0.0.1', resolve))
+  process.env.GITHUB_API_URL = `http://127.0.0.1:${api.address().port}`
+  try {
+    const fixed = await checkRelease({ repo: 'me/chk', serverKey: key, outDir: out, repair: true, token: 't', log: quiet })
+    assert.equal(fixed.repaired.length, 1)
+  } finally {
+    delete process.env.GITHUB_API_URL
+    api.close()
+  }
+  assert.ok(fs.existsSync(path.join(relDir, lost)))
+  assert.equal((await checkRelease({ repo: 'me/chk', serverKey: key, outDir: out, log: quiet })).missing.length, 0)
+})
