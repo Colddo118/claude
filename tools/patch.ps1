@@ -58,6 +58,19 @@ function File-Hash($p) {
   return ''
 }
 
+# 대륙 맵 (tools/map.js). 서버 키는 이 호출 동안만 환경변수로 넘긴다
+function Map-Run([string[]]$mapArgs) {
+  $env:SERVER_PACK_KEY = $settings.serverKey
+  try { $out = & node "$Tools\map.js" @mapArgs '--source' $settings.instance '--out' $OutDir }
+  finally { Remove-Item Env:SERVER_PACK_KEY -ErrorAction SilentlyContinue }
+  if ($LASTEXITCODE -ne 0) { throw "대륙 맵 작업이 실패했습니다 ($($mapArgs[0]))" }
+  return $out
+}
+
+function Map-Status {
+  return (Map-Run @('status') | Select-Object -Last 1) | ConvertFrom-Json
+}
+
 Write-Host ''
 Write-Host '=== KubejsRPG 패치 배포 ===' -ForegroundColor Cyan
 
@@ -83,8 +96,42 @@ Save-Settings $settings
 
 $packConfigPath = Join-Path $settings.instance 'pack.config.json'
 if (-not (Test-Path $packConfigPath)) { throw "pack.config.json 이 없습니다: $packConfigPath" }
-$repo = (Get-Content $packConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json).github
+$packConfig = Get-Content $packConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$repo = $packConfig.github
 if (-not $repo) { throw 'pack.config.json 에 "github": "아이디/modpack" 이 없습니다.' }
+
+# --- 0. 대륙 맵: 서버가 보낸 맵 받기 / 싱글 월드에서 고친 맵 올리기 (pack.config.json 의 "map") ---
+$pushMap = $false
+if ($packConfig.map) {
+  Write-Host ''
+  Write-Host '=== 대륙 맵 ===' -ForegroundColor Cyan
+  $map = Map-Status
+  if ($map.server -and $map.server.newer) {
+    $when = $map.server.sentAt
+    try { $when = ([datetime]::Parse([string]$map.server.sentAt)).ToString('MM-dd HH:mm') } catch {}
+    Write-Host "서버가 보낸 대륙 맵이 있습니다 ($when): 받을 파일 $($map.server.take)개, 양쪽에서 고친 파일 $($map.server.conflicts)개"
+    if ($map.worldInUse) {
+      Write-Host '싱글 월드가 게임에서 열려 있어 지금은 받을 수 없습니다. 월드에서 나간 뒤 patch.bat 을 다시 실행하세요.' -ForegroundColor Yellow
+    } elseif (($map.server.take + $map.server.conflicts) -eq 0) {
+      Map-Run @('pull') | Out-Null  # 덮을 것 없음 → 받은 시각만 기록
+    } elseif (Ask-YesNo '싱글 월드에 받을까요? (덮기 전 파일은 pack-dist-gh\map-backup 에 남깁니다)') {
+      $conflict = 'keep'
+      if ($map.server.conflicts -gt 0 -and (Ask-YesNo "양쪽에서 고친 $($map.server.conflicts)개도 서버 것으로 덮을까요? (n = 내 것 유지, 다음 올리기에 실림)")) { $conflict = 'take' }
+      Map-Run @('pull', '--conflict', $conflict) | ForEach-Object { Write-Host $_ }
+      $map = Map-Status
+    }
+  }
+  if ($map.devChanged -gt 0) {
+    if ($map.worldInUse) {
+      Write-Host "싱글 월드가 게임에서 열려 있어 이번 패치에는 맵을 싣지 않습니다 (고친 파일 $($map.devChanged)개)." -ForegroundColor Yellow
+    } else {
+      if ($map.server -and $map.server.newer) { Write-Host '서버가 보낸 맵을 아직 받지 않았습니다. 지금 올리면 고친 region 은 서버 것 대신 내 것으로 덮입니다.' -ForegroundColor Yellow }
+      $pushMap = Ask-YesNo "싱글 월드에서 고친 대륙 맵 파일 $($map.devChanged)개를 이번 패치로 서버에 올릴까요?"
+    }
+  } else {
+    Write-Host '싱글 월드에서 고친 대륙 맵이 없습니다 (서버 맵은 그대로).'
+  }
+}
 
 # --- 1. 버전과 패치노트 ---
 $lastVersion = $null
@@ -138,6 +185,11 @@ $tokenIsNew = $false
 if (-not $secure) {
   $secure = Read-Token
   $tokenIsNew = $true
+  # 업로드가 오래 걸려 창을 닫아도 남도록, 넣자마자 저장할지 묻는다 (업로드가 실패하면 아래에서 지움)
+  if (Ask-YesNo '토큰을 이 컴퓨터(이 윈도우 계정)에만 풀 수 있게 암호화해서 저장할까요? 다음부터 입력 안 해도 됩니다') {
+    $settings.token = ConvertFrom-SecureString $secure
+    Save-Settings $settings
+  }
 }
 
 # --- 3. 빌드 + 업로드 ---
@@ -146,10 +198,12 @@ try {
   $env:GITHUB_TOKEN = (Plain $secure).Trim()
   $env:SERVER_PACK_KEY = $settings.serverKey
   try {
-    Run-Node @("$Tools\build-manifest.js", '--source', $settings.instance, '--out', $OutDir, '--version', $version, '--notes-file', $notesFile, '--publish')
+    $buildArgs = @("$Tools\build-manifest.js", '--source', $settings.instance, '--out', $OutDir, '--version', $version, '--notes-file', $notesFile, '--publish')
+    if ($pushMap) { $buildArgs += '--map' }
+    Run-Node $buildArgs
   } catch {
-    if (-not $tokenIsNew) {
-      Write-Host '저장된 토큰이 만료되었거나 삭제되었을 수 있습니다. 다음 실행 때 새 토큰을 물어보도록 지웁니다.' -ForegroundColor Yellow
+    if ($settings.token) {
+      Write-Host '토큰이 만료되었거나 잘못되었을 수 있습니다. 다음 실행 때 새 토큰을 물어보도록 저장된 토큰을 지웁니다.' -ForegroundColor Yellow
       $settings.token = ''
       Save-Settings $settings
     }
@@ -159,11 +213,6 @@ try {
 } finally {
   Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:SERVER_PACK_KEY -ErrorAction SilentlyContinue
-}
-
-if ($tokenIsNew -and (Ask-YesNo '토큰을 이 컴퓨터(이 윈도우 계정)에만 풀 수 있게 암호화해서 저장할까요? 다음부터 입력 안 해도 됩니다')) {
-  $settings.token = ConvertFrom-SecureString $secure
-  Save-Settings $settings
 }
 
 Write-Host ''

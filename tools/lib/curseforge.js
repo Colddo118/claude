@@ -14,7 +14,7 @@ function cdnUrl (file) {
 }
 
 /**
- * 디스크 상 파일 이름(소문자) → CDN 주소
+ * 디스크 상 파일 이름(소문자) → { url: CDN 주소, sha1: 커스포지 원본 해시(모르면 null) }
  */
 async function readCurseForgeFiles (sourceDir) {
   let info
@@ -29,7 +29,8 @@ async function readCurseForgeFiles (sourceDir) {
     if (!file) continue
     const url = cdnUrl(file)
     const onDisk = addon.fileNameOnDisk || file.fileNameOnDisk || file.fileName
-    if (url && onDisk) map.set(onDisk.toLowerCase(), url)
+    const sha1 = ((file.hashes || []).find(h => h && h.type === 1) || {}).value || null
+    if (url && onDisk) map.set(onDisk.toLowerCase(), { url, sha1: sha1 && String(sha1).toLowerCase() })
   }
   return map
 }
@@ -37,10 +38,14 @@ async function readCurseForgeFiles (sourceDir) {
 // 모드/리소스팩/셰이더 폴더 바로 아래 파일만 CDN 대상으로 본다.
 const CDN_DIRS = ['mods', 'resourcepacks', 'shaderpacks']
 
-function cdnUrlFor (map, relPath) {
+// 디스크 파일을 직접 고친 경우(jar 패치 등 — 크기가 같을 수 있음) 원본 해시와 다르면 CDN 을 쓰지 않는다
+function cdnUrlFor (map, relPath, sha1) {
   const parts = relPath.split('/')
   if (parts.length !== 2 || !CDN_DIRS.includes(parts[0])) return null
-  return map.get(parts[1].toLowerCase()) || null
+  const hit = map.get(parts[1].toLowerCase())
+  if (!hit) return null
+  if (hit.sha1 && sha1 && hit.sha1 !== String(sha1).toLowerCase()) return null
+  return hit.url
 }
 
 // CDN 주소가 실제로 같은 크기의 파일을 주는지 확인한다. 실패하면 null.

@@ -78,4 +78,32 @@ async function publishRelease ({ repo, token, version, notes, files }) {
   }
 }
 
-module.exports = { api, API, publishRelease, assetUrl, releaseDownloadPrefix, manifestUrl, releaseTag }
+// 고정 태그(사전 배포) 릴리스: 모드팩 런처가 보는 releases/latest 에 잡히지 않는다
+async function getOrCreatePrerelease ({ repo, token, tag, name, body = '' }) {
+  try {
+    return await api(token, 'GET', `${API()}/repos/${repo}/releases/tags/${tag}`)
+  } catch (e) {
+    if (e.status !== 404) throw e
+  }
+  return api(token, 'POST', `${API()}/repos/${repo}/releases`, { tag_name: tag, name, body, prerelease: true, make_latest: 'false' })
+}
+
+async function listAssets ({ repo, token, releaseId }) {
+  const all = []
+  for (let page = 1; ; page++) {
+    const batch = await api(token, 'GET', `${API()}/repos/${repo}/releases/${releaseId}/assets?per_page=100&page=${page}`)
+    all.push(...batch)
+    if (batch.length < 100) return all
+  }
+}
+
+async function uploadAsset ({ token, release, name, data }) {
+  const uploadBase = release.upload_url.replace(/\{.*\}$/, '')
+  return api(token, 'POST', `${uploadBase}?name=${encodeURIComponent(name)}`, data, { 'Content-Type': 'application/octet-stream' })
+}
+
+async function deleteAsset ({ repo, token, id }) {
+  return api(token, 'DELETE', `${API()}/repos/${repo}/releases/assets/${id}`)
+}
+
+module.exports = { api, API, publishRelease, assetUrl, releaseDownloadPrefix, manifestUrl, releaseTag, getOrCreatePrerelease, listAssets, uploadAsset, deleteAsset }

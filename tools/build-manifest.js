@@ -21,6 +21,7 @@ const { readCurseForgeFiles, cdnUrlFor, checkUrl } = require('./lib/curseforge')
 const modrinth = require('./lib/modrinth')
 const { groupFiles } = require('./lib/grouping')
 const { SERVER_DIRS, clientOnlyPatterns } = require('./lib/server-files')
+const mapSync = require('./lib/map-sync')
 const secret = require('../launcher/src/common/secret')
 const github = require('./lib/github')
 const {
@@ -59,7 +60,7 @@ const DEFAULT_CONFIG = {
   changelogLimit: 30
 }
 
-const FLAG_OPTIONS = ['force', 'help', 'publish', 'no-cdn', 'no-modrinth', 'no-url-check']
+const FLAG_OPTIONS = ['force', 'help', 'publish', 'no-cdn', 'no-modrinth', 'no-url-check', 'map']
 const VALUE_OPTIONS = ['source', 'out', 'version', 'notes', 'notes-file', 'config', 'github']
 
 function parseArgs (argv) {
@@ -92,6 +93,8 @@ const USAGE = `사용법:
   --no-cdn        커스포지 CDN 을 쓰지 않고 모든 파일을 직접 올린다
   --no-modrinth   커스포지에 없는 모드를 모드린스에서 찾지 않는다
   --no-url-check  CDN 주소 확인(HEAD 요청)을 건너뛴다
+  --map           싱글 월드에서 바뀐 대륙 맵(pack.config.json 의 "map")을 서버 패키지에 싣는다.
+                  안 주면 서버 맵은 지난 패치 그대로 둔다
   --force         같은 버전으로 다시 빌드 허용`
 
 // 커스포지 인스턴스의 minecraftinstance.json 에서 MC/로더 버전을 읽는다.
@@ -217,7 +220,7 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
  * - 서버 전용 파일(서버 스크립트·데이터)은 암호화 묶음(s-<sha1>.bin)으로 올린다
  * - 클라이언트 전용 모드는 뺀다
  */
-async function buildServerPackage ({ serverKey, included, clientFiles, clientBundles, sourceDir, outDir, releaseDir, addAsset, bundleLimit, userConfig, base }) {
+async function buildServerPackage ({ serverKey, included, clientFiles, clientBundles, sourceDir, outDir, releaseDir, addAsset, bundleLimit, userConfig, base, previousServer, pushMap }) {
   const clientOnly = clientOnlyPatterns(userConfig)
   const byPath = new Map(clientFiles.map(f => [f.path, f]))
   const files = []
@@ -247,13 +250,17 @@ async function buildServerPackage ({ serverKey, included, clientFiles, clientBun
     for (const f of g.files) f.bundle = id
   }
 
-  const serverManifest = { ...base, strictDirs: [], clientOnly, bundles, files }
+  // 대륙 맵: 서버 패키지에만 실린다 (--map 이 아니면 지난 패키지의 맵 항목을 그대로 이어 감)
+  const map = mapSync.mapSettings(userConfig)
+  const mapReport = await mapSync.addMapToServerPackage({ push: pushMap, map, sourceDir, outDir, previousServer, files, bundles, releaseDir, addAsset, serverKey })
+
+  const serverManifest = { ...base, strictDirs: [], clientOnly, bundles, files, ...(map ? { map: { dims: map.dims, parts: map.parts } } : {}) }
   validateManifest(serverManifest)
   // 다음 빌드에서 재사용 판단용 (로컬에만 보관, 업로드는 암호화본만)
   await fsp.writeFile(path.join(outDir, 'server-manifest.json'), JSON.stringify(serverManifest, null, 2))
   const binFile = path.join(releaseDir, 'server-manifest.bin')
   await fsp.writeFile(binFile, secret.encrypt(Buffer.from(JSON.stringify(serverManifest)), serverKey))
-  return { binFile, fileCount: files.length, secretCount: secretFiles.length }
+  return { binFile, fileCount: files.length, secretCount: secretFiles.length, map: mapReport }
 }
 
 function nextVersion (v) {
@@ -302,7 +309,7 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     const entry = { path: rel, sha1: await sha1File(abs), size: (await fsp.stat(abs)).size }
     if (matchesAny(rel, config.once)) entry.mode = 'once'
     else if (matchesAny(rel, config.update)) entry.mode = 'update'
-    const url = cdnUrlFor(cdnMap, rel)
+    const url = cdnUrlFor(cdnMap, rel, entry.sha1)
     if (url) entry.url = url
     files.push(entry)
   }
@@ -347,10 +354,12 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   let newObjects = 0
   const MB = 1024 * 1024
   const bundleLimit = config.bundleSizeMB ? config.bundleSizeMB * MB : BUNDLE_LIMIT
+  const previousServer = await readJsonIfExists(path.join(outDir, 'server-manifest.json'))
+  if (flags.map && !(mode === 'github' && serverKey)) throw new Error('--map 은 GitHub 배포 + 서버 키가 있을 때만 쓸 수 있습니다')
   if (mode === 'github') {
     assets = await buildGithubAssets({
       repo, version, sourceDir, outDir, previous, selfHosted, bundles, newAssets, bundleLimit,
-      previousServer: await readJsonIfExists(path.join(outDir, 'server-manifest.json')),
+      previousServer,
       largeFile: config.largeFileMB ? config.largeFileMB * MB : LARGE_FILE
     })
     releaseDir = assets.releaseDir
@@ -395,7 +404,7 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   if (mode === 'github' && serverKey) {
     serverPackage = await buildServerPackage({
       serverKey, included, clientFiles: files, clientBundles: bundles, sourceDir, outDir, releaseDir,
-      addAsset: assets.addAsset, bundleLimit, userConfig, base
+      addAsset: assets.addAsset, bundleLimit, userConfig, base, previousServer, pushMap: !!flags.map
     })
     newAssets.push(serverPackage.binFile)
   }
@@ -464,10 +473,15 @@ async function main () {
   console.log('  가장 큰 파일:')
   const source = f => !f.url ? '' : r.repo && f.url.startsWith(github.releaseDownloadPrefix(r.repo)) ? '  (GitHub)' : /modrinth\.com\//.test(f.url) ? '  (모드린스)' : '  (CDN)'
   for (const f of r.largest) console.log(`    ${mb(f.size).padStart(10)}  ${f.path}${source(f)}`)
+  const map = r.serverPackage && r.serverPackage.map
+  if (map && map.pushed) console.log(`  - 대륙 맵: 싱글 월드에서 바뀐 파일 ${map.changed}개 (${mb(map.uploadBytes)}) → 서버가 덮음, 안 바뀐 파일 ${map.kept}개는 서버 것 유지`)
+  else if (map && map.carried) console.log(`  - 대륙 맵: 이번엔 안 올림 (서버 맵 그대로, 지난 항목 ${map.carried}개 이어 감)`)
   if (r.cdnFailed.length) {
     console.log(`  ! CDN 주소 확인 실패로 직접 올리는 파일 ${r.cdnFailed.length}개: ${r.cdnFailed.slice(0, 5).join(', ')}${r.cdnFailed.length > 5 ? ' ...' : ''}`)
   }
 
+  // 맵을 실었으면 "마지막으로 주고받은 상태" 를 기록 (업로드에 실패하면 기록하지 않음)
+  const saveMapSync = async () => { if (map && map.pushed) await mapSync.writeSync(path.resolve(args.out), map.sync) }
   if (r.mode === 'objects') {
     console.log(`  → ${path.resolve(args.out)} 폴더를 웹 호스팅에 업로드하세요 (새 파일 ${r.newObjects}개, manifest.json 은 마지막에).`)
     return
@@ -477,6 +491,7 @@ async function main () {
   if (!args.publish) {
     console.log(`  → GitHub 에서 ${r.repo} 저장소에 태그 ${github.releaseTag(manifest.version)} 로 새 릴리스를 만들고`)
     console.log(`    ${r.releaseDir} 폴더 안의 파일을 전부 첨부하세요. (--publish 를 주면 자동)`)
+    await saveMapSync()
   } else {
     try {
       await github.publishRelease({
@@ -494,6 +509,7 @@ async function main () {
       }
       throw e
     }
+    await saveMapSync()
     console.log(`  ✔ GitHub 릴리스 ${github.releaseTag(manifest.version)} 게시 완료. 이제 런처에 업데이트가 뜹니다.`)
   }
   console.log('  ⚠ 이전 릴리스는 지우지 마세요. 바뀌지 않은 파일은 예전 릴리스에서 받습니다.')

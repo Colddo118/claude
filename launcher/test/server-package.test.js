@@ -168,6 +168,22 @@ test('서버 패키지: 암호화 배포와 서버 키트 원클릭 업데이트
   const u6 = await runKit(srv)
   assert.equal(u6.code, 0, u6.out)
   assert.equal(read(srv, 'kubejs/config/gear.generated.json'), '{"gen":"server"}') // 지우지도 않음
+  // 2026-10-09: kubejs/config(맵 설정 · 퀘스트 등) · kubejs/data(데이터팩)는 관리자 관리 영역 — 서버 것이 기록과 달라도 관리자 것으로.
+  // 서버가 실행 중에 쓰는 *.generated.json · kubejs/data/rpg 는 계속 서버 것
+  write(srv, 'kubejs/config/town_central.json', '{"portals":"server-old"}')
+  write(src, 'kubejs/config/town_central.json', '{"portals":"admin-new"}')
+  write(srv, 'kubejs/data/kubejs/worldgen/biome/cont_x.json', '{"v":"server"}')
+  write(src, 'kubejs/data/kubejs/worldgen/biome/cont_x.json', '{"v":2}')
+  write(srv, 'kubejs/config/gear.generated.json', '{"gen":"server2"}')
+  write(src, 'kubejs/config/gear.generated.json', '{"gen":3}')
+  const r7 = await build({ source: src, out, version: '1.0.5', notes: '-', serverKey: key })
+  publishLocally(r7)
+  const u7 = await runKit(srv)
+  assert.equal(u7.code, 0, u7.out)
+  assert.equal(read(srv, 'kubejs/config/town_central.json'), '{"portals":"admin-new"}')
+  assert.equal(read(srv, 'kubejs/data/kubejs/worldgen/biome/cont_x.json'), '{"v":2}')
+  assert.equal(read(srv, 'kubejs/config/gear.generated.json'), '{"gen":"server2"}')
+  assert.equal(read(srv, 'kubejs/data/rpg/telemetry.json'), '{"from":"live server"}')
   // 월드는 처음부터 끝까지 그대로
   assert.equal(read(srv, 'world/level.dat'), 'world')
 
