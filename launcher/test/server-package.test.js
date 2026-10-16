@@ -182,6 +182,11 @@ test('서버 패키지: 암호화 배포와 서버 키트 원클릭 업데이트
   assert.equal(u7.code, 0, u7.out)
   assert.equal(read(srv, 'kubejs/server_scripts/recipes.js'), 'SECRET_RECIPE_v2')
 
+  // 서버 키를 새로 만들었으면 예전 키로 잠근 서버 묶음은 재사용하지 않는다 (새 키로 다시 암호화)
+  const r8 = await build({ source: src, out, version: '1.0.6', notes: '-', serverKey: secret.newKey(), quiet: true })
+  assert.ok(r8.newAssets.some(f => /^s-[0-9a-f]+\.bin$/.test(path.basename(f))))
+  assert.ok(!r8.newAssets.some(f => /^b-/.test(path.basename(f)))) // 친구용 묶음은 그대로 재사용
+
   // 키가 틀리면 명확한 오류
   write(srv, 'server-update.json', JSON.stringify({ repo: 'me/modpack', key: secret.newKey() }))
   const bad = await runKit(srv)

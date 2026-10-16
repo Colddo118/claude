@@ -133,6 +133,55 @@ async function sha1File (file) {
   return hash.digest('hex')
 }
 
+// 해시 기록: 크기·수정 시각이 그대로인 파일은 다시 읽지 않는다 (파일이 수천 개라 매번 전부 읽으면 오래 걸림)
+async function openHashCache (outDir) {
+  const file = path.join(outDir, '.hash-cache.json')
+  let saved = {}
+  try { saved = JSON.parse(await fsp.readFile(file, 'utf8')) || {} } catch {}
+  const used = new Map()
+  return {
+    async hash (abs) {
+      const st = await fsp.stat(abs)
+      const c = saved[abs]
+      const sha1 = c && c.size === st.size && c.mtimeMs === st.mtimeMs ? c.sha1 : await sha1File(abs)
+      used.set(abs, { size: st.size, mtimeMs: st.mtimeMs, sha1 })
+      return { sha1, size: st.size }
+    },
+    async save () {
+      await fsp.mkdir(outDir, { recursive: true })
+      await fsp.writeFile(file, JSON.stringify(Object.fromEntries(used)))
+    }
+  }
+}
+
+// 묶음 재사용: 묶음 이름과 안의 파일(경로+해시)이 이전 버전과 똑같으면 다시 압축하지 않고 이전 묶음을 쓴다
+function contentKey (id, files) {
+  return id + '\n' + files.map(f => `${f.path}:${f.sha1}`).sort().join('\n')
+}
+
+function indexBundles (manifest, filter = () => true) {
+  const members = new Map()
+  for (const f of (manifest && manifest.files) || []) {
+    if (!f.bundle) continue
+    if (!members.has(f.bundle)) members.set(f.bundle, [])
+    members.get(f.bundle).push(f)
+  }
+  const index = new Map()
+  for (const b of (manifest && manifest.bundles) || []) {
+    if (filter(b) && members.has(b.id)) index.set(contentKey(b.id, members.get(b.id)), b)
+  }
+  return index
+}
+
+// 이전 릴리스에 실제로 남아 있는 묶음만 (주소 확인은 동시에 여러 개)
+function findReusable (groups, idOf, index, skipPrefix) {
+  return mapLimit(groups, 8, async g => {
+    const prev = index.get(contentKey(idOf(g), g.files))
+    if (!prev || prev.url.startsWith(skipPrefix)) return null
+    return (await checkUrl(prev.url, prev.size)) ? prev : null
+  })
+}
+
 async function readJsonIfExists (file) {
   try {
     return JSON.parse(await fsp.readFile(file, 'utf8'))
@@ -154,6 +203,11 @@ async function fetchLatestAsset (repo, name) {
   }
 }
 
+// 이전 서버 패키지가 지금 서버 키로 만든 것인지 (키가 바뀌었으면 이전 암호화 묶음을 재사용하면 안 됨)
+function keyCheck (serverKey) {
+  return crypto.createHash('sha256').update(`krp-key-check:${serverKey}`).digest('hex').slice(0, 16)
+}
+
 async function remotePrevious ({ repo, outDir, serverKey, log }) {
   let previous = await readJsonIfExists(path.join(outDir, 'manifest.json'))
   let previousServer = await readJsonIfExists(path.join(outDir, 'server-manifest.json'))
@@ -166,7 +220,7 @@ async function remotePrevious ({ repo, outDir, serverKey, log }) {
     const buf = await fetchLatestAsset(repo, 'server-manifest.bin')
     if (buf) {
       try {
-        previousServer = JSON.parse(secret.decrypt(buf, serverKey).toString('utf8'))
+        previousServer = { ...JSON.parse(secret.decrypt(buf, serverKey).toString('utf8')), keyCheck: keyCheck(serverKey) }
       } catch {
         // 키가 바뀌었으면 이전 서버 패키지를 못 연다 → 서버 전용 파일은 새로 올린다 (서버 키트도 다시 복사해야 함)
         log('  ! 이전 서버 패키지를 지금 서버 키로 열 수 없습니다. 서버 전용 파일을 새로 올립니다 (서버 키트 다시 복사 필요).')
@@ -211,30 +265,41 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
 
   let reused = 0
   const thisRelease = github.assetUrl(repo, version, '')
-  const addAsset = async (key, name, size, produce) => {
-    // 이전 릴리스에 같은 파일이 실제로 올라가 있을 때만 재사용한다.
-    // (같은 버전을 --force 로 다시 빌드했거나, 빌드만 하고 업로드는 안 한 버전이면 다시 올린다)
-    const prev = known.get(key)
-    if (prev && !prev.startsWith(thisRelease) && await checkUrl(prev, size)) {
-      reused++
-      return prev
+  const pending = new Map() // 같은 파일을 동시에 두 번 만들지 않게
+  const addAsset = (key, name, size, produce) => {
+    if (!pending.has(key)) {
+      pending.set(key, (async () => {
+        // 이전 릴리스에 같은 파일이 실제로 올라가 있을 때만 재사용한다.
+        // (같은 버전을 --force 로 다시 빌드했거나, 빌드만 하고 업로드는 안 한 버전이면 다시 올린다)
+        const prev = known.get(key)
+        if (prev && !prev.startsWith(thisRelease) && await checkUrl(prev, size)) {
+          reused++
+          return prev
+        }
+        const dest = path.join(releaseDir, name)
+        await produce(dest)
+        newAssets.push(dest)
+        return github.assetUrl(repo, version, name)
+      })())
     }
-    const dest = path.join(releaseDir, name)
-    if (!newAssets.includes(dest)) {
-      await produce(dest)
-      newAssets.push(dest)
-    }
-    const url = github.assetUrl(repo, version, name)
-    known.set(key, url)
-    return url
+    return pending.get(key)
   }
 
-  for (const f of selfHosted.filter(f => f.size >= largeFile)) {
+  await mapLimit(selfHosted.filter(f => f.size >= largeFile), 8, async f => {
     f.url = await addAsset(`f:${f.sha1}`, `f-${f.sha1}`, f.size, dest => fsp.copyFile(path.join(sourceDir, ...f.path.split('/')), dest))
-  }
+  })
 
   const tmp = path.join(releaseDir, '.building.zip')
-  for (const g of groupFiles(selfHosted.filter(f => f.size < largeFile), bundleLimit)) {
+  const groups = groupFiles(selfHosted.filter(f => f.size < largeFile), bundleLimit)
+  const reusable = await findReusable(groups, g => g.id, indexBundles(previous), thisRelease)
+  for (const [i, g] of groups.entries()) {
+    const prev = reusable[i]
+    if (prev) {
+      reused++
+      bundles.push({ id: g.id, url: prev.url, sha1: prev.sha1, size: prev.size })
+      for (const f of g.files) f.bundle = g.id
+      continue
+    }
     await writeZip(tmp, g.files.map(f => ({ name: f.path, file: path.join(sourceDir, ...f.path.split('/')) })))
     const sha1 = await sha1File(tmp)
     const size = (await fsp.stat(tmp)).size
@@ -243,7 +308,7 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
     bundles.push({ id: g.id, url, sha1, size })
     for (const f of g.files) f.bundle = g.id
   }
-  return { releaseDir, addAsset, reused: () => reused }
+  return { releaseDir, addAsset, reused: () => reused, countReused: () => { reused++ }, thisRelease }
 }
 
 /**
@@ -252,17 +317,19 @@ async function buildGithubAssets ({ repo, version, sourceDir, outDir, previous, 
  * - 서버 전용 파일(서버 스크립트·데이터)은 암호화 묶음(s-<sha1>.bin)으로 올린다
  * - 클라이언트 전용 모드는 뺀다
  */
-async function buildServerPackage ({ serverKey, included, clientFiles, clientBundles, sourceDir, outDir, releaseDir, addAsset, bundleLimit, userConfig, base, previousServer, log = () => {} }) {
+async function buildServerPackage ({ serverKey, included, clientFiles, clientBundles, sourceDir, outDir, releaseDir, addAsset, countReused = () => {}, thisRelease = '', hashes, bundleLimit, userConfig, base, previousServer, log = () => {} }) {
+  const hashOf = hashes ? abs => hashes.hash(abs) : async abs => ({ sha1: await sha1File(abs), size: (await fsp.stat(abs)).size })
   const clientOnly = clientOnlyPatterns(userConfig)
   const byPath = new Map(clientFiles.map(f => [f.path, f]))
   const files = []
   const secretFiles = []
-  for (const rel of included) {
-    if (!matchesAny(rel, SERVER_DIRS) || matchesAny(rel.toLowerCase(), clientOnly)) continue
+  const serverRels = included.filter(rel => matchesAny(rel, SERVER_DIRS) && !matchesAny(rel.toLowerCase(), clientOnly))
+  const ownHashes = await mapLimit(serverRels, 8, rel => byPath.has(rel) ? null : hashOf(path.join(sourceDir, ...rel.split('/'))))
+  for (const [i, rel] of serverRels.entries()) {
     const shared = byPath.get(rel)
     const entry = shared
       ? { path: rel, sha1: shared.sha1, size: shared.size, ...(shared.url ? { url: shared.url } : {}), ...(shared.bundle ? { bundle: shared.bundle } : {}) }
-      : { path: rel, sha1: await sha1File(path.join(sourceDir, ...rel.split('/'))), size: (await fsp.stat(path.join(sourceDir, ...rel.split('/')))).size }
+      : { path: rel, ...ownHashes[i] }
     // 모드는 항상 똑같이, 나머지는 관리자가 바꿨을 때만 (서버가 실행 중에 쓰는 데이터 보존)
     if (!rel.startsWith('mods/')) entry.mode = 'update'
     if (!shared) secretFiles.push(entry)
@@ -271,7 +338,16 @@ async function buildServerPackage ({ serverKey, included, clientFiles, clientBun
 
   const bundles = clientBundles.filter(b => files.some(f => f.bundle === b.id))
   const tmp = path.join(releaseDir, '.building-server.zip')
-  for (const g of groupFiles(secretFiles, bundleLimit)) {
+  const secretGroups = groupFiles(secretFiles, bundleLimit)
+  const reusable = await findReusable(secretGroups, g => `server:${g.id}`, indexBundles(previousServer, b => b.enc), thisRelease || '\0')
+  for (const [i, g] of secretGroups.entries()) {
+    const prev = reusable[i]
+    if (prev) {
+      countReused()
+      bundles.push(prev)
+      for (const f of g.files) f.bundle = prev.id
+      continue
+    }
     await writeZip(tmp, g.files.map(f => ({ name: f.path, file: path.join(sourceDir, ...f.path.split('/')) })))
     const sealed = secret.encrypt(await fsp.readFile(tmp), serverKey)
     await fsp.rm(tmp, { force: true })
@@ -300,8 +376,7 @@ async function buildServerPackage ({ serverKey, included, clientFiles, clientBun
     const { dimDir, files: dimFiles } = await maps.collectDimensionFiles(worldDir, m.dimension)
     if (!dimFiles.length) throw new Error(`맵 패치: 차원 폴더가 비어 있습니다: ${path.relative(sourceDir, dimDir)} (차원 id ${m.dimension} 확인)`)
     log(`  맵 패치 ${m.dimension} v${m.version}: 파일 ${dimFiles.length}개 묶는 중...`)
-    const entries = []
-    for (const f of dimFiles) entries.push({ path: f.path, abs: f.abs, sha1: await sha1File(f.abs), size: (await fsp.stat(f.abs)).size })
+    const entries = await mapLimit(dimFiles, 8, async f => ({ path: f.path, abs: f.abs, ...(await hashOf(f.abs)) }))
     const tmpMap = path.join(releaseDir, '.building-map.zip')
     for (const g of groupFiles(entries, bundleLimit)) {
       await writeZip(tmpMap, g.files.map(f => ({ name: f.path, file: f.abs })))
@@ -319,7 +394,7 @@ async function buildServerPackage ({ serverKey, included, clientFiles, clientBun
   const serverManifest = { ...base, strictDirs: [], clientOnly, bundles, files, ...(mapEntries.length ? { maps: mapEntries } : {}) }
   validateManifest(serverManifest)
   // 다음 빌드에서 재사용 판단용 (로컬에만 보관, 업로드는 암호화본만)
-  await fsp.writeFile(path.join(outDir, 'server-manifest.json'), JSON.stringify(serverManifest, null, 2))
+  await fsp.writeFile(path.join(outDir, 'server-manifest.json'), JSON.stringify({ ...serverManifest, keyCheck: keyCheck(serverKey) }, null, 2))
   const binFile = path.join(releaseDir, 'server-manifest.bin')
   await fsp.writeFile(binFile, secret.encrypt(Buffer.from(JSON.stringify(serverManifest)), serverKey))
   return { binFile, fileCount: files.length, secretCount: secretFiles.length, maps: mapEntries.map(m => ({ dimension: m.dimension, version: m.version, fileCount: m.files.length })) }
@@ -351,9 +426,10 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   }
 
   const log = flags.quiet ? () => {} : console.log
-  const { previous, previousServer } = mode === 'github' && flags['remote-previous'] !== false
+  let { previous, previousServer } = mode === 'github' && flags['remote-previous'] !== false
     ? await remotePrevious({ repo, outDir, serverKey, log })
     : { previous: await readJsonIfExists(path.join(outDir, 'manifest.json')), previousServer: await readJsonIfExists(path.join(outDir, 'server-manifest.json')) }
+  if (previousServer && (!serverKey || previousServer.keyCheck !== keyCheck(serverKey))) previousServer = null
   if (previous && previous.version === version && !force) {
     // 빌드는 됐지만 업로드가 실패해서 GitHub 에 없는 버전이면 같은 번호로 다시 해도 된다
     const unpublished = mode === 'github' && flags.publish && !(await checkUrl(github.assetUrl(repo, version, 'manifest.json')))
@@ -367,17 +443,19 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   const candidates = included.filter(p => !matchesAny(p, config.serverOnly)).sort()
   const cdnMap = flags['no-cdn'] || config.useCurseForgeCdn === false ? new Map() : await readCurseForgeFiles(sourceDir)
 
-  const files = []
-  for (const rel of candidates) {
-    if (!isSafeRelPath(rel)) throw new Error(`지원하지 않는 파일 경로: ${rel}`)
-    const abs = path.join(sourceDir, ...rel.split('/'))
-    const entry = { path: rel, sha1: await sha1File(abs), size: (await fsp.stat(abs)).size }
+  const started = Date.now()
+  const lap = label => log(`  · ${label} (${((Date.now() - started) / 1000).toFixed(0)}초)`)
+  for (const rel of candidates) if (!isSafeRelPath(rel)) throw new Error(`지원하지 않는 파일 경로: ${rel}`)
+  const hashes = await openHashCache(outDir)
+  const files = await mapLimit(candidates, 8, async rel => {
+    const entry = { path: rel, ...(await hashes.hash(path.join(sourceDir, ...rel.split('/')))) }
     if (matchesAny(rel, config.once)) entry.mode = 'once'
     else if (matchesAny(rel, config.update)) entry.mode = 'update'
     const url = cdnUrlFor(cdnMap, rel)
     if (url) entry.url = url
-    files.push(entry)
-  }
+    return entry
+  })
+  lap(`파일 ${files.length}개 확인`)
 
   // CDN 주소가 실제로 살아 있는지 확인하고, 안 되는 파일은 직접 올리는 쪽으로 돌린다.
   const cdnFailed = []
@@ -391,6 +469,8 @@ async function build ({ source, out, version, notes, config: configPath, force, 
       }
     })
   }
+
+  if (!flags['no-url-check']) lap('CDN 주소 확인')
 
   // 커스포지에서 못 받는 모드·리소스팩은 모드린스에서 같은 파일(sha1)을 찾아 본다 (남의 모드를 GitHub 에 다시 올리지 않게)
   let modrinthCount = 0
@@ -425,6 +505,7 @@ async function build ({ source, out, version, notes, config: configPath, force, 
       largeFile: config.largeFileMB ? config.largeFileMB * MB : LARGE_FILE
     })
     releaseDir = assets.releaseDir
+    lap(`올릴 파일 준비 (재사용 ${assets.reused()}개)`)
   } else {
     for (const f of selfHosted) {
       const objFile = path.join(outDir, ...objectPath(f.sha1).split('/'))
@@ -466,10 +547,13 @@ async function build ({ source, out, version, notes, config: configPath, force, 
   if (mode === 'github' && serverKey) {
     serverPackage = await buildServerPackage({
       serverKey, included, clientFiles: files, clientBundles: bundles, sourceDir, outDir, releaseDir,
-      addAsset: assets.addAsset, bundleLimit, userConfig, base, previousServer, log
+      addAsset: assets.addAsset, countReused: assets.countReused, thisRelease: assets.thisRelease, hashes,
+      bundleLimit, userConfig, base, previousServer, log
     })
+    lap('서버 패키지 준비')
     newAssets.push(serverPackage.binFile)
   }
+  await hashes.save()
 
   // 어디가 큰지 보여주기 위한 요약: 폴더별 합계, 가장 큰 파일
   const byDir = {}
@@ -558,7 +642,8 @@ async function main () {
         token: process.env.GITHUB_TOKEN,
         version: manifest.version,
         notes,
-        files: r.newAssets
+        files: r.newAssets,
+        log: console.log
       })
     } catch (e) {
       // 올리지 못했으면 로컬 기록도 이전(실제로 배포된) 상태로 돌려 둔다
