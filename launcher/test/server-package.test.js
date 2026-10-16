@@ -168,24 +168,40 @@ test('서버 패키지: 암호화 배포와 서버 키트 원클릭 업데이트
   const u6 = await runKit(srv)
   assert.equal(u6.code, 0, u6.out)
   assert.equal(read(srv, 'kubejs/config/gear.generated.json'), '{"gen":"server"}') // 지우지도 않음
+  // 2026-10-09: kubejs/config(맵 설정 · 퀘스트 등) · kubejs/data(데이터팩)는 관리자 관리 영역 — 서버 것이 기록과 달라도 관리자 것으로.
+  // 서버가 실행 중에 쓰는 *.generated.json · kubejs/data/rpg 는 계속 서버 것
+  write(srv, 'kubejs/config/town_central.json', '{"portals":"server-old"}')
+  write(src, 'kubejs/config/town_central.json', '{"portals":"admin-new"}')
+  write(srv, 'kubejs/data/kubejs/worldgen/biome/cont_x.json', '{"v":"server"}')
+  write(src, 'kubejs/data/kubejs/worldgen/biome/cont_x.json', '{"v":2}')
+  write(srv, 'kubejs/config/gear.generated.json', '{"gen":"server2"}')
+  write(src, 'kubejs/config/gear.generated.json', '{"gen":3}')
+  const r7 = await build({ source: src, out, version: '1.0.5', notes: '-', serverKey: key })
+  publishLocally(r7)
+  const u7 = await runKit(srv)
+  assert.equal(u7.code, 0, u7.out)
+  assert.equal(read(srv, 'kubejs/config/town_central.json'), '{"portals":"admin-new"}')
+  assert.equal(read(srv, 'kubejs/data/kubejs/worldgen/biome/cont_x.json'), '{"v":2}')
+  assert.equal(read(srv, 'kubejs/config/gear.generated.json'), '{"gen":"server2"}')
+  assert.equal(read(srv, 'kubejs/data/rpg/telemetry.json'), '{"from":"live server"}')
   // 월드는 처음부터 끝까지 그대로
   assert.equal(read(srv, 'world/level.dat'), 'world')
 
   // 관리자 컴의 배포 폴더(pack-dist-gh)가 통째로 사라져도: GitHub 의 최신 기록을 이어 쓴다
   fs.rmSync(out, { recursive: true, force: true })
-  await assert.rejects(build({ source: src, out, version: '1.0.4', notes: '-', serverKey: key, quiet: true }), /이미 1\.0\.4/)
-  const r7 = await build({ source: src, out, version: '1.0.5', notes: '- 폴더 복구 후', serverKey: key, quiet: true })
-  assert.deepEqual(r7.manifest.changelog.slice(0, 3).map(c => c.version), ['1.0.5', '1.0.4', '1.0.3'])
-  assert.deepEqual(r7.newAssets.map(f => path.basename(f)).sort(), ['manifest.json', 'server-manifest.bin']) // 바뀐 게 없으니 전부 재사용
-  publishLocally(r7)
-  const u7 = await runKit(srv)
-  assert.equal(u7.code, 0, u7.out)
+  await assert.rejects(build({ source: src, out, version: '1.0.5', notes: '-', serverKey: key, quiet: true }), /이미 1\.0\.5/)
+  const r8 = await build({ source: src, out, version: '1.0.6', notes: '- 폴더 복구 후', serverKey: key, quiet: true })
+  assert.deepEqual(r8.manifest.changelog.slice(0, 3).map(c => c.version), ['1.0.6', '1.0.5', '1.0.4'])
+  assert.deepEqual(r8.newAssets.map(f => path.basename(f)).sort(), ['manifest.json', 'server-manifest.bin']) // 바뀐 게 없으니 전부 재사용
+  publishLocally(r8)
+  const u8 = await runKit(srv)
+  assert.equal(u8.code, 0, u8.out)
   assert.equal(read(srv, 'kubejs/server_scripts/recipes.js'), 'SECRET_RECIPE_v2')
 
   // 서버 키를 새로 만들었으면 예전 키로 잠근 서버 묶음은 재사용하지 않는다 (새 키로 다시 암호화)
-  const r8 = await build({ source: src, out, version: '1.0.6', notes: '-', serverKey: secret.newKey(), quiet: true })
-  assert.ok(r8.newAssets.some(f => /^s-[0-9a-f]+\.bin$/.test(path.basename(f))))
-  assert.ok(!r8.newAssets.some(f => /^b-/.test(path.basename(f)))) // 친구용 묶음은 그대로 재사용
+  const r9 = await build({ source: src, out, version: '1.0.7', notes: '-', serverKey: secret.newKey(), quiet: true })
+  assert.ok(r9.newAssets.some(f => /^s-[0-9a-f]+\.bin$/.test(path.basename(f))))
+  assert.ok(!r9.newAssets.some(f => /^b-/.test(path.basename(f)))) // 친구용 묶음은 그대로 재사용
 
   // 키가 틀리면 명확한 오류
   write(srv, 'server-update.json', JSON.stringify({ repo: 'me/modpack', key: secret.newKey() }))
@@ -213,104 +229,6 @@ test('서버 키트 묶기: 윈도우(CRLF·BOM) 체크아웃에서도 shebang �
   const r = require('node:child_process').spawnSync(process.execPath, [out], { encoding: 'utf8', env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' } })
   assert.equal(r.status, 0, r.stderr)
   assert.equal(r.stdout.trim(), '42')
-})
-
-test('맵 패치: 싱글 월드의 차원을 서버 월드로 통째로 교체 (버전이 바뀔 때만, 원래 차원은 백업)', async () => {
-  const key = secret.newKey()
-  const src = path.join(tmp, 'map-instance')
-  const out = path.join(tmp, 'map-dist')
-  const srv = path.join(tmp, 'map-server')
-  const city = 'saves/CityDev/dimensions/kubejsrpg/city'
-  const mapCfg = version => JSON.stringify({ github: 'me/modpack', maps: [{ world: 'CityDev', dimension: 'kubejsrpg:city', version }] })
-
-  write(src, 'minecraftinstance.json', JSON.stringify({ gameVersion: '1.21.1', baseModLoader: { name: 'neoforge-21.1.77' } }))
-  write(src, 'pack.config.json', mapCfg(1))
-  write(src, 'mods/create.jar', 'create-v1')
-  write(src, 'kubejs/data/kubejsrpg/dimension/city.json', '{"type":"minecraft:overworld"}')
-  write(src, `${city}/region/r.0.0.mca`, 'CITY_REGION_v1')
-  write(src, `${city}/entities/r.0.0.mca`, 'CITY_NPCS_v1')
-  write(src, `${city}/poi/r.0.0.mca`, 'CITY_POI_v1')
-  write(src, 'saves/CityDev/region/r.0.0.mca', 'DEV_OVERWORLD') // 오버월드는 보내지 않음
-  write(src, 'saves/CityDev/level.dat', 'dev level')
-
-  const r1 = await build({ source: src, out, version: '3.0.0', notes: '', serverKey: key })
-  assert.deepEqual(r1.serverPackage.maps, [{ dimension: 'kubejsrpg:city', version: 1, fileCount: 3 }])
-  assert.ok(!r1.manifest.files.some(f => f.path.startsWith('saves/')))
-  for (const f of r1.newAssets) assert.ok(!fs.readFileSync(f).includes('CITY_REGION'), path.basename(f)) // 암호화
-  publishLocally(r1)
-
-  write(srv, 'server.properties', 'level-name=world\n')
-  write(srv, 'world/region/r.0.0.mca', 'PLAYER_OVERWORLD')
-  write(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca', 'OLD_CITY')
-  write(srv, 'libraries/net/neoforged/neoforge/21.1.77/neoforge-21.1.77-server.jar', 'x')
-  makeKit({ out: srv, repo: 'me/modpack', key })
-
-  const check = await runKit(srv, ['--check'])
-  assert.match(check.out, /맵 kubejsrpg:city 을 v1 으로 교체 예정/)
-  assert.equal(read(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca'), 'OLD_CITY')
-
-  const run1 = await runKit(srv)
-  assert.equal(run1.code, 0, run1.out)
-  assert.match(run1.out, /맵 교체: kubejsrpg:city → v1/)
-  assert.equal(read(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca'), 'CITY_REGION_v1')
-  assert.equal(read(srv, 'world/dimensions/kubejsrpg/city/entities/r.0.0.mca'), 'CITY_NPCS_v1')
-  assert.equal(read(srv, 'world/region/r.0.0.mca'), 'PLAYER_OVERWORLD') // 오버월드는 그대로
-  const backups = fs.readdirSync(path.join(srv, '.update-backup'))
-  const aside = backups.map(b => path.join(srv, '.update-backup', b, 'maps/world/dimensions/kubejsrpg/city/region/r.0.0.mca')).find(p => fs.existsSync(p))
-  assert.equal(fs.readFileSync(aside, 'utf8'), 'OLD_CITY')
-
-  // 같은 맵 버전으로 다시 패치: 차원 파일을 다시 올리지도, 서버에서 다시 바꾸지도 않는다
-  write(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca', 'PLAYER_CHANGED_CITY')
-  write(src, `${city}/region/r.0.0.mca`, 'CITY_REGION_v1_wip') // 관리자가 작업 중 (버전은 안 올림)
-  const r2 = await build({ source: src, out, version: '3.0.1', notes: '', serverKey: key })
-  assert.deepEqual(r2.newAssets.filter(f => /^s-/.test(path.basename(f))), []) // 암호화 묶음 새로 올린 것 없음 (맵은 3.0.0 것 재사용)
-  publishLocally(r2)
-  const run2 = await runKit(srv)
-  assert.equal(run2.code, 0, run2.out)
-  assert.doesNotMatch(run2.out, /맵 교체/)
-  assert.equal(read(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca'), 'PLAYER_CHANGED_CITY')
-
-  // 버전을 올리면 교체
-  write(src, 'pack.config.json', mapCfg(2))
-  write(src, `${city}/region/r.0.0.mca`, 'CITY_REGION_v2')
-  const r3 = await build({ source: src, out, version: '3.0.2', notes: '', serverKey: key })
-  publishLocally(r3)
-  const run3 = await runKit(srv)
-  assert.equal(run3.code, 0, run3.out)
-  assert.equal(read(srv, 'world/dimensions/kubejsrpg/city/region/r.0.0.mca'), 'CITY_REGION_v2')
-
-  // 오버월드는 지정할 수 없다
-  write(src, 'pack.config.json', JSON.stringify({ github: 'me/modpack', maps: [{ world: 'CityDev', dimension: 'minecraft:overworld', version: 1 }] }))
-  await assert.rejects(build({ source: src, out, version: '3.0.3', notes: '', serverKey: key }), /오버월드/)
-})
-
-test('맵 패치: 업로드가 중간에 끊긴 뒤 다시 배포해도 서버가 없는 맵 파일을 받으러 가지 않는다', async () => {
-  const key = secret.newKey()
-  const src = path.join(tmp, 'map2-instance')
-  const out = path.join(tmp, 'map2-dist')
-  const srv = path.join(tmp, 'map2-server')
-  const city = 'saves/CityDev/dimensions/kubejsrpg/town'
-  write(src, 'minecraftinstance.json', JSON.stringify({ gameVersion: '1.21.1', baseModLoader: { name: 'neoforge-21.1.77' } }))
-  write(src, 'pack.config.json', JSON.stringify({ github: 'me/town', maps: [{ world: 'CityDev', dimension: 'kubejsrpg:town', version: 1 }] }))
-  write(src, 'mods/create.jar', 'create-v1')
-  write(src, `${city}/region/r.0.0.mca`, 'TOWN_v1')
-  write(src, 'saves/CityDev/level.dat', 'dev level')
-
-  // 4.0.0 은 만들어졌지만 업로드 도중 창을 닫음 → GitHub 에 없음
-  await build({ source: src, out, version: '4.0.0', notes: '', serverKey: key, quiet: true })
-  // 다음 배포 (맵 버전은 그대로)
-  const r = await build({ source: src, out, version: '4.0.1', notes: '', serverKey: key, quiet: true })
-  const relDir = path.join(tmp, 'www', 'me', 'town', 'releases', 'download', 'pack-4.0.1')
-  fs.mkdirSync(relDir, { recursive: true })
-  for (const f of r.newAssets) fs.copyFileSync(f, path.join(relDir, path.basename(f)))
-  for (const name of ['manifest.json', 'server-manifest.bin']) write(path.join(tmp, 'www'), `me/town/releases/latest/download/${name}`, fs.readFileSync(path.join(relDir, name)))
-
-  write(srv, 'server.properties', 'level-name=world\n')
-  write(srv, 'libraries/net/neoforged/neoforge/21.1.77/neoforge-21.1.77-server.jar', 'x')
-  makeKit({ out: srv, repo: 'me/town', key })
-  const run = await runKit(srv)
-  assert.equal(run.code, 0, run.out)
-  assert.equal(read(srv, 'world/dimensions/kubejsrpg/town/region/r.0.0.mca'), 'TOWN_v1')
 })
 
 test('배포 점검: 서버용 목록이 가리키는 파일이 GitHub 에 없으면 찾아내고, 내 컴에 있으면 다시 올린다', async () => {

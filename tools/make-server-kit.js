@@ -6,6 +6,8 @@
 //   server-update.json 저장소 이름 + 서버 키 + 서버 실행 명령
 //   서버시작.bat        패치 받고 서버 켜기 (평소엔 이것만 더블클릭)
 //   서버업데이트.bat    패치만 받기
+//   맵보내기.bat        서버 월드의 대륙 맵을 관리자 컴으로 보내기 (GitHub 토큰 필요)
+//   맵초기화.bat        오버월드 · 네더 · 엔드를 점유 청크만 남기고 초기화 (백업 먼저)
 //
 //   node tools/make-server-kit.js --out <폴더> --repo 아이디/modpack   (키는 SERVER_PACK_KEY 환경변수)
 
@@ -81,6 +83,70 @@ node server-update.js --check
 pause
 `
 
+const MAPSEND_BAT = `@echo off
+chcp 65001 >nul
+cd /d "%~dp0"
+where node >nul 2>nul || (echo Node.js is not installed. Install the LTS version from https://nodejs.org & pause & exit /b 1)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0map-send.ps1"
+pause
+`
+
+const RESETMAP_BAT = `@echo off
+chcp 65001 >nul
+cd /d "%~dp0"
+where node >nul 2>nul || (echo Node.js is not installed. Install the LTS version from https://nodejs.org & pause & exit /b 1)
+node server-update.js --reset-map
+pause
+`
+
+// 토큰은 이 윈도우 계정으로만 풀리게 암호화해서 .map-token 에 둔다 (patch.ps1 과 같은 방식)
+const MAPSEND_PS1 = `# 맵보내기.bat 에서 실행: 서버 월드의 대륙 맵을 관리자 컴으로 보낸다 (GitHub server-map 릴리스, 서버 키로 암호화)
+$ErrorActionPreference = 'Stop'
+Set-Location $PSScriptRoot
+$TokenFile = Join-Path $PSScriptRoot '.map-token'
+
+function Plain($secure) {
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+}
+
+Write-Host ''
+Write-Host '=== 대륙 맵 보내기 (서버는 꺼져 있어야 합니다) ===' -ForegroundColor Cyan
+$secure = $null
+if (Test-Path $TokenFile) {
+  try { $secure = ConvertTo-SecureString ((Get-Content $TokenFile -Raw).Trim()) } catch { $secure = $null }
+}
+$isNew = $false
+if (-not $secure) {
+  Write-Host 'GitHub 토큰을 붙여넣습니다: 창에 마우스 오른쪽 클릭 → Enter (Ctrl+V 는 안 됩니다. 화면엔 * 만 보임)' -ForegroundColor Cyan
+  $secure = Read-Host 'GitHub 토큰' -AsSecureString
+  $isNew = $true
+}
+$plain = (Plain $secure).Trim()
+if ($plain -notmatch '^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$') {
+  $plain = $null
+  if (-not $isNew) { Remove-Item $TokenFile -Force -ErrorAction SilentlyContinue }
+  Write-Host '토큰 모양이 아닙니다. 맵보내기.bat 을 다시 실행해 github_pat_ 로 시작하는 토큰 전체를 붙여넣으세요.' -ForegroundColor Yellow
+  exit 1
+}
+$env:GITHUB_TOKEN = $plain
+$plain = $null
+try {
+  & node server-update.js --send-map
+  $code = $LASTEXITCODE
+} finally {
+  Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+}
+if ($code -eq 0 -and $isNew) {
+  ConvertFrom-SecureString $secure | Set-Content $TokenFile -Encoding ASCII
+  Write-Host '토큰을 이 컴퓨터(이 윈도우 계정)에서만 풀 수 있게 암호화해서 .map-token 에 저장했습니다.' -ForegroundColor DarkGray
+}
+if ($code -ne 0 -and -not $isNew) {
+  Write-Host '토큰이 만료되었으면 .map-token 파일을 지우고 다시 실행하세요.' -ForegroundColor Yellow
+}
+exit $code
+`
+
 const CLAUDE_MD = `# 이 폴더: KubejsRPG 마인크래프트 서버 (NeoForge)
 
 이 문서는 이 서버 컴에서 일하는 Claude Code 를 위한 안내입니다. 작업 전에 끝까지 읽으세요.
@@ -103,12 +169,20 @@ const CLAUDE_MD = `# 이 폴더: KubejsRPG 마인크래프트 서버 (NeoForge)
 | .update-backup/<시각>/ | 패치로 바뀌거나 지워진 파일의 이전 내용 |
 | backups/ (server-update.json 의 backup.dir) | 월드 증분 백업. objects/ = 파일 내용, snapshots/ = 백업 시점별 목록. **직접 고치거나 지우지 말 것** |
 | 백업복원.bat | 백업 목록에서 골라 월드 되돌리기 |
+| 맵보내기.bat / map-send.ps1 | 서버 월드의 대륙 맵을 관리자 컴으로 보내기 (서버 끈 상태에서) |
+| 맵초기화.bat | 오버월드 · 네더 · 엔드를 FTB 점유 청크만 남기고 초기화 (서버 끈 상태에서, 백업 먼저) |
+| .map-token | 맵보내기용 GitHub 토큰 (이 윈도우 계정으로 암호화, **출력 · 복사 금지**) |
 
 ## 서버 데이터 보호 (server-update.js 가 지키는 원칙)
 - 월드, 플레이어 데이터, server.properties, 화이트리스트/OP/밴, 로그는 패치 대상이 아니라 절대 안 바뀝니다.
+  **예외: 대륙 맵.** 관리자가 패치에 맵을 실으면 world/dimensions/kubejs/continent 의 region · poi 중
+  관리자가 싱글 월드에서 고친 파일만 덮습니다 (관리자가 안 고친 region 은 서버 것 그대로, 맵 파일은 지우지 않음).
+  덮이는 파일은 .update-backup 에, 월드 전체는 서버시작.bat 의 백업에 남습니다.
 - mods / config / defaultconfigs / scripts / kubejs 의 startup_scripts·server_scripts·client_scripts·assets 는
   관리자 관리 영역이라 관리자가 바꾸면 서버도 바뀝니다 (백업 후).
-- 그 밖의 파일(kubejs/data, kubejs/config 등)은 서버가 한 번이라도 바꿨으면 관리자가 바꾸거나 지워도 그대로 둡니다.
+- kubejs/config · kubejs/data(맵 설정 · 퀘스트 · 몹 표 등)도 관리자 관리 영역입니다(2026-10-09). 단 서버가 실행 중에 쓰는
+  kubejs/data/rpg(원장 · 시세 · 기록)와 kubejs/config/*.generated.json 은 서버가 한 번이라도 바꿨으면 그대로 둡니다.
+  서버에서 운영 명령(/마을 NPC · /배편 선장)으로 바꾼 자리는 다음 관리자 패치에 덮이니, 자리는 관리자 인스턴스에서 정하세요.
 - server-update.json 의 "keep" 에 적은 파일은 무조건 서버 것을 유지합니다.
 
 ## 규칙
@@ -134,13 +208,16 @@ const CLAUDE_MD = `# 이 폴더: KubejsRPG 마인크래프트 서버 (NeoForge)
   공식 설치 파일을 받아 서버 모드로 설치). 자동 설치가 실패하면 출력을 읽고 원인을 보고하세요.
   NeoForge 가 새로 설치되면 user_jvm_args.txt 의 -Xmx 가 남아 있는지 확인하세요.
 - **되돌리기**: .update-backup/<시각>/ 의 파일을 제자리로 복사.
-- **맵 패치**: 관리자가 pack.config.json 의 maps 버전을 올리면, 패치 때 그 차원(예: 도시 차원) 폴더만 통째로 교체된다.
-  원래 차원은 .update-backup/<시각>/maps/ 로 옮겨진다. .map-state.json 은 적용한 맵 버전 기록이니 고치지 말 것.
-  메인 오버월드는 맵 패치 대상이 아니다.
 - **월드 백업**: 서버시작.bat 이 서버를 켜기 전에 자동으로 한다 (바뀐 파일만 저장, 최근 backup.keep 개 보관).
   월드를 되돌려야 하면 서버를 끄고 백업복원.bat. 백업을 다른 드라이브에 두려면 server-update.json 의
   backup.dir 을 "D:/KubejsRPG-backup" 처럼 바꾼다 (기존 backups 폴더는 통째로 옮겨도 됨).
   backups 폴더를 직접 정리하지 말 것 (오래된 백업은 자동으로 지워짐).
+- **대륙 맵 관리자에게 보내기**: 서버를 끄고 \`맵보내기.bat\`. 처음 한 번 GitHub 토큰을 묻는다
+  (관리자에게 받은 토큰, modpack 저장소 Contents 읽기·쓰기). 바뀐 region 만 새로 올라간다.
+  관리자가 patch.bat 을 실행하면 받을지 묻는다. 토큰 값은 절대 출력하지 말 것.
+- **맵 초기화**: 관리자가 시킬 때만. 서버를 끄고 \`맵초기화.bat\` → 미리보기를 보여 주고 '초기화' 를 입력해야 진행.
+  FTB 점유 · /forceload · 시련의 탑 수정구 청크만 남기고 오버월드 · 네더 · 엔드의 나머지 청크를 지운다
+  (같은 시드로 다시 생김). 대륙 · 던전 차원, 인벤토리 · 레벨 · 돈은 그대로. 진행 전에 백업을 자동으로 받는다.
 `
 
 const README = `KubejsRPG 서버 키트
@@ -151,7 +228,7 @@ const README = `KubejsRPG 서버 키트
  2. 이 폴더 안의 파일을 서버 폴더에 복사합니다.
     새 서버라면 빈 폴더에 넣으면 됩니다. 서버시작.bat 을 실행하면 자바·NeoForge 서버·모드팩을 알아서 설치하고,
     마인크래프트 EULA 동의를 물어본 뒤 서버를 켭니다.
-    server-update.js / server-update.json / 서버시작.bat / 서버업데이트.bat / 미리보기.bat / 백업복원.bat / CLAUDE.md
+    server-update.js / server-update.json / 서버시작.bat / 서버업데이트.bat / 미리보기.bat / 백업복원.bat / 맵보내기.bat / 맵초기화.bat / map-send.ps1 / CLAUDE.md
  3. 서버를 run.bat 이 아닌 다른 방법으로 켠다면 server-update.json 의 "start" 를 그 명령으로 바꿉니다.
 
 처음 적용 전 (기존 서버에 처음 넣을 때):
@@ -163,6 +240,15 @@ const README = `KubejsRPG 서버 키트
  - 패치만 받고 싶으면 서버업데이트.bat, 바뀔 내용만 보려면 미리보기.bat.
  - 서버 컴의 Claude Code 는 CLAUDE.md 를 읽고 이 규칙대로 일합니다.
 
+대륙 맵:
+ - 관리자가 패치에 맵을 실으면, 서버시작.bat 이 관리자가 고친 region 파일만 덮습니다 (나머지는 서버 것 그대로).
+ - 서버 맵을 관리자에게 보내려면: 서버를 끄고 맵보내기.bat (처음 한 번 GitHub 토큰을 물어봅니다).
+
+맵 초기화 (오버월드 · 네더 · 엔드):
+ - 서버를 끄고 맵초기화.bat → 남길 청크 · 지울 청크 수를 먼저 보여 주고, '초기화' 를 입력해야 진행합니다.
+ - FTB 로 점유한 청크(건물 · 상자 · 상자 안 아이템)는 그대로, 나머지 땅은 같은 시드로 새로 생깁니다.
+ - 진행 전에 월드를 자동 백업합니다. 되돌리려면 백업복원.bat.
+
 월드 백업:
  - 서버시작.bat 이 서버를 켜기 전에 월드를 자동 백업합니다 (처음만 오래 걸리고, 그다음부터는 바뀐 부분만).
  - 되돌리려면 서버를 끄고 백업복원.bat → 번호 선택.
@@ -170,7 +256,8 @@ const README = `KubejsRPG 서버 키트
 
 주의:
  - server-update.json 에는 서버 스크립트를 푸는 키가 들어 있습니다. 다른 사람에게 주지 마세요.
- - 월드, server.properties 등은 건드리지 않습니다. 바뀌거나 지워지는 파일은 .update-backup 에 백업됩니다.
+ - 월드, server.properties 등은 건드리지 않습니다 (대륙 맵 예외는 위). 바뀌거나 지워지는 파일은 .update-backup 에 백업됩니다.
+ - .map-token 은 GitHub 토큰입니다. 다른 사람에게 주지 마세요.
 `
 
 function makeKit ({ out, repo, key, start = 'run.bat' }) {
@@ -188,6 +275,10 @@ function makeKit ({ out, repo, key, start = 'run.bat' }) {
   fs.writeFileSync(path.join(out, '서버업데이트.bat'), UPDATE_BAT.replace(/\n/g, '\r\n'))
   fs.writeFileSync(path.join(out, '미리보기.bat'), CHECK_BAT.replace(/\n/g, '\r\n'))
   fs.writeFileSync(path.join(out, '백업복원.bat'), RESTORE_BAT.replace(/\n/g, '\r\n'))
+  fs.writeFileSync(path.join(out, '맵보내기.bat'), MAPSEND_BAT.replace(/\n/g, '\r\n'))
+  fs.writeFileSync(path.join(out, '맵초기화.bat'), RESETMAP_BAT.replace(/\n/g, '\r\n'))
+  // 윈도우 PowerShell 5.1 은 BOM 이 없으면 한글을 깨뜨린다
+  fs.writeFileSync(path.join(out, 'map-send.ps1'), '\uFEFF' + MAPSEND_PS1.replace(/\n/g, '\r\n'))
   fs.writeFileSync(path.join(out, 'CLAUDE.md'), CLAUDE_MD)
   fs.writeFileSync(path.join(out, '읽어주세요.txt'), '﻿' + README.replace(/\n/g, '\r\n'))
   return out

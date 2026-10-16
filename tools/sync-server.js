@@ -21,7 +21,7 @@ const path = require('node:path')
 const { matchesAny, isSafeRelPath } = require('../launcher/src/common/manifest')
 const { DEFAULT_CONFIG, readJsonIfExists, sha1File, walk } = require('./build-manifest')
 
-const { SERVER_DIRS, ADMIN_MANAGED, DEFAULT_CLIENT_ONLY } = require('./lib/server-files')
+const { SERVER_DIRS, isAdminManaged, DEFAULT_CLIENT_ONLY } = require('./lib/server-files')
 const STATE_FILE = '.sync-state.json'
 
 function parseArgs (argv) {
@@ -86,7 +86,7 @@ async function syncServer ({ source, server, config: configPath, dryRun = false,
     } else if (strict || state.files[rel] !== sha1) {
       // mods 는 항상 인스턴스와 같게, 나머지는 인스턴스 쪽이 바뀌었을 때만
       if (await sha1File(serverFile(rel)) === sha1) continue
-      if (!strict && !matchesAny(rel, ADMIN_MANAGED) && await serverChanged(rel)) {
+      if (!strict && !isAdminManaged(rel) && await serverChanged(rel)) {
         protectedFiles.push(rel)
         continue
       }
@@ -97,7 +97,7 @@ async function syncServer ({ source, server, config: configPath, dryRun = false,
   // 이 도구가 예전에 넣었는데 이제 목록에 없는 파일 → 삭제 (클라이언트 전용으로 바뀐 모드 포함)
   const removals = []
   for (const rel of Object.keys(state.files).filter(rel => !wanted.has(rel) && exists(rel))) {
-    if (!rel.startsWith('mods/') && !matchesAny(rel, ADMIN_MANAGED) && await serverChanged(rel)) protectedFiles.push(rel)
+    if (!rel.startsWith('mods/') && !isAdminManaged(rel) && await serverChanged(rel)) protectedFiles.push(rel)
     else removals.push(rel)
   }
   // 서버에 있는 클라이언트 전용 모드는 추적 여부와 상관없이 치운다 (그대로 두면 서버가 안 켜짐)

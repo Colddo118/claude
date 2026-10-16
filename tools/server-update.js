@@ -9,6 +9,8 @@
 //   node server-update.js --start    월드 백업 → 업데이트 → 서버 실행 (서버시작.bat 이 이걸 부름)
 //   node server-update.js --backup   월드 백업만
 //   node server-update.js --restore  백업 목록에서 골라 되돌리기 (백업복원.bat)
+//   node server-update.js --send-map 서버 월드의 대륙 맵을 관리자 컴으로 보내기 (맵보내기.bat, GITHUB_TOKEN 필요)
+//   node server-update.js --reset-map 오버월드 · 네더 · 엔드를 점유 청크만 남기고 초기화 (맵초기화.bat, 백업 먼저)
 //
 // server-update.json 의 "keep": ["kubejs/data/rpg/telemetry.json"] 처럼 적은 파일은
 // 서버에 있으면 절대 덮어쓰지 않는다 (서버가 직접 기록하는 데이터용)
@@ -16,6 +18,7 @@
 // - 모드는 관리자 인스턴스와 똑같이 맞추고, 설정/KubeJS 는 관리자가 바꿨을 때만 덮어쓴다
 //   (서버가 실행 중에 기록하는 데이터 보존)
 // - 월드, server.properties 등 목록에 없는 파일은 건드리지 않는다
+//   예외: 관리자가 올린 대륙 맵(world/dimensions/... 의 region · poi) 중 관리자가 바꾼 파일만 덮는다. 지우지는 않는다.
 // - 바뀌거나 지워지는 파일은 .update-backup/<시각>/ 에 먼저 복사해 둔다
 
 const fs = require('node:fs')
@@ -28,8 +31,9 @@ const { validateManifest, matchesAny } = require('../launcher/src/common/manifes
 const github = require('./lib/github')
 const setup = require('./lib/server-setup')
 const backup = require('./lib/backup')
-const maps = require('./lib/maps')
-const { ADMIN_MANAGED } = require('./lib/server-files')
+const { isAdminManaged } = require('./lib/server-files')
+const mapSync = require('./lib/map-sync')
+const worldReset = require('./lib/world-reset')
 
 const CONFIG_FILE = 'server-update.json'
 const STATE_FILE = '.server-update-state.json'
@@ -55,6 +59,12 @@ function listJars (serverDir) {
 // check: true 면 바뀔 내용만 계산하고 아무것도 바꾸지 않는다
 async function updateServer ({ serverDir, repo, key, keep = [], check = false, log = () => {} }) {
   const { manifest, url } = await fetchServerManifest(repo, key)
+  // 대륙 맵은 world 폴더 기준으로 온다. 월드 이름을 바꾼 서버면 맵은 건너뛴다
+  let mapSkipped = false
+  if (backup.levelName(serverDir) !== 'world' && manifest.files.some(f => mapSync.isMapPath(f.path))) {
+    manifest.files = manifest.files.filter(f => !mapSync.isMapPath(f.path))
+    mapSkipped = true
+  }
   const stateFile = path.join(serverDir, STATE_FILE)
   const state = await updater.loadState(stateFile)
   const plan = await updater.planUpdate({ manifest, instanceDir: serverDir, state })
@@ -76,6 +86,8 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
     return false
   })
   plan.removals = plan.removals.filter(p => !matchesAny(p, keep))
+  // 맵 파일은 관리자 목록에서 빠져도 지우지 않는다 (서버에서 생긴 region 일 수 있음)
+  plan.removals = plan.removals.filter(p => !mapSync.isMapPath(p))
 
   // 서버 데이터 보호: 관리자 관리 영역이 아닌 파일은, 서버에서 바뀌었으면 절대 덮어쓰거나 지우지 않는다.
   // "서버에서 바뀜" = 이 도구가 마지막으로 설치한 내용과 다름 (설치한 적 없는데 서버에 있으면 서버 것으로 봄)
@@ -89,7 +101,7 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
   }
   const stillDownload = []
   for (const f of plan.downloads) {
-    if (!matchesAny(f.path, ADMIN_MANAGED) && await serverChanged(f.path)) {
+    if (!isAdminManaged(f.path) && await serverChanged(f.path)) {
       if (state.files[f.path]) plan.records[f.path] = state.files[f.path]
       protectedFiles.push(f.path)
     } else {
@@ -99,7 +111,7 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
   plan.downloads = stillDownload
   const stillRemove = []
   for (const p of plan.removals) {
-    if (!matchesAny(p, ADMIN_MANAGED) && !p.startsWith('mods/') && await serverChanged(p)) protectedFiles.push(p)
+    if (!isAdminManaged(p) && !p.startsWith('mods/') && await serverChanged(p)) protectedFiles.push(p)
     else stillRemove.push(p)
   }
   plan.removals = stillRemove
@@ -116,6 +128,8 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
     loader: manifest.loader,
     kept,
     protectedFiles,
+    mapFiles: plan.downloads.filter(f => mapSync.isMapPath(f.path)).length,
+    mapSkipped,
     manifest,
     loaderMissing: false,
     backupDir: null
@@ -148,18 +162,6 @@ async function updateServer ({ serverDir, repo, key, keep = [], check = false, l
     })
     if (!fs.existsSync(report.backupDir)) report.backupDir = null
   }
-  // 맵 패치 (관리자가 버전을 올린 차원만 통째로 교체)
-  report.maps = await maps.applyMaps({
-    serverDir,
-    manifest,
-    manifestUrl: url,
-    levelName: backup.levelName(serverDir),
-    decrypt: buf => secret.decrypt(buf, key),
-    check,
-    log,
-    downloadVerified: updater.downloadVerified,
-    extractFromBundle: updater.extractFromBundle
-  })
   try {
     report.loaderMissing = !setup.loaderInstalled(serverDir, manifest.loader)
   } catch {
@@ -199,6 +201,8 @@ async function main () {
   const check = process.argv.includes('--check')
 
   if (process.argv.includes('--restore')) return restoreMenu(serverDir, cfg)
+  if (process.argv.includes('--send-map')) return sendMap(serverDir, cfg)
+  if (process.argv.includes('--reset-map')) return resetMap(serverDir, cfg)
 
   // 서버를 켜기 전에 월드 백업 (바뀐 파일만 저장하므로 보통 금방 끝남)
   if (start || process.argv.includes('--backup')) {
@@ -220,7 +224,6 @@ async function main () {
       for (const p of r.protectedFiles) console.log(`  = 서버 데이터라 유지: ${p}`)
       console.log(`합계: 받을 파일 ${r.downloads.length}개, 지울 파일 ${r.removals.length}개, 보존 ${r.kept.length + r.protectedFiles.length}개`)
       if (r.loaderMissing) console.log(`• ${r.loader.type} ${r.loader.version} 서버가 아직 없습니다 → 실제 실행 때 자동 설치`)
-      for (const m of r.maps.filter(m => m.pending)) console.log(`• 맵 ${m.dimension} 을 v${m.version} 으로 교체 예정 (지금 차원은 .update-backup 으로 옮김)`)
       return process.exit(0)
     }
     if (!r.downloads.length && !r.removals.length) {
@@ -228,9 +231,10 @@ async function main () {
     } else {
       console.log(`✔ 패치 적용: v${r.fromVersion || '(처음)'} → v${r.toVersion}  (받은 파일 ${r.downloads.length}개, 지운 파일 ${r.removals.length}개)`)
       for (const p of r.removals) console.log(`  - ${p}`)
+      if (r.mapFiles) console.log(`  대륙 맵: 관리자가 고친 region · poi 파일 ${r.mapFiles}개를 덮었습니다`)
       if (r.backupDir) console.log(`  이전 파일 백업: ${r.backupDir}`)
     }
-    for (const m of r.maps.filter(m => m.applied)) console.log(`✔ 맵 교체: ${m.dimension} → v${m.version} (파일 ${m.fileCount}개)`)
+    if (r.mapSkipped) console.log('  ! server.properties 의 level-name 이 world 가 아니라서 대륙 맵은 적용하지 않았습니다')
     if (r.protectedFiles.length) {
       console.log(`  서버에서 바뀐 데이터 파일 ${r.protectedFiles.length}개는 관리자 패치와 상관없이 그대로 뒀습니다:`)
       for (const p of r.protectedFiles) console.log(`    = ${p}`)
@@ -268,6 +272,45 @@ async function main () {
 
   console.log(`\n서버 시작: ${cfg.start || 'run.bat'}\n`)
   process.exit(await startServer(serverDir, cfg.start || 'run.bat', java && java.binDir))
+}
+
+// 서버 월드의 대륙 맵을 GitHub(server-map 릴리스, 서버 키로 암호화)에 올린다 → 관리자가 patch.bat 에서 받는다
+async function sendMap (serverDir, cfg) {
+  const token = (process.env.GITHUB_TOKEN || '').trim()
+  if (!token) throw new Error('GitHub 토큰이 없습니다. 맵보내기.bat 으로 실행하세요.')
+  const { manifest } = await fetchServerManifest(cfg.repo, cfg.key)
+  if (!manifest.map) throw new Error('관리자 패치에 맵 설정이 아직 없습니다 (관리자 pack.config.json 의 "map")')
+  const level = backup.levelName(serverDir)
+  if (level !== 'world') throw new Error(`server.properties 의 level-name 이 world 가 아닙니다 (${level}). 대륙 맵은 world 폴더만 지원합니다.`)
+  const worldAbs = path.join(serverDir, level)
+  if (mapSync.worldInUse(worldAbs)) throw new Error('서버가 켜져 있습니다. 콘솔에 stop 으로 끈 뒤 다시 실행하세요.')
+  console.log(`대륙 맵 보내는 중 (${manifest.map.dims.join(', ')})...`)
+  const r = await mapSync.sendServerMap({ repo: cfg.repo, token, key: cfg.key, worldAbs, map: manifest.map, tmpDir: serverDir, log: console.log })
+  console.log(`✔ 맵 보냄: 파일 ${r.fileCount}개 중 새로 올린 것 ${r.uploaded}개 (${backup.formatSize(r.uploadedBytes)}) · 시각 ${r.sentAt}`)
+  console.log('  관리자 컴에서 patch.bat 을 실행하면 받을지 물어봅니다.')
+  return process.exit(0)
+}
+
+// 맵 초기화 — 점유 청크만 남기고 오버월드 · 네더 · 엔드를 같은 시드로 다시 생기게 (tools/lib/world-reset.js)
+async function resetMap (serverDir, cfg) {
+  const worldAbs = path.join(serverDir, backup.levelName(serverDir))
+  if (mapSync.worldInUse(worldAbs)) throw new Error('서버가 켜져 있습니다. 콘솔에 stop 으로 끈 뒤 다시 실행하세요.')
+  console.log(`맵 초기화 미리보기 (${worldAbs}) — 아직 아무것도 바꾸지 않았습니다\n`)
+  const plan = worldReset.planReset(worldAbs)
+  for (const line of worldReset.describePlan(plan)) console.log(line)
+  if (!plan.claimCount) throw new Error('FTB 점유 청크를 하나도 찾지 못했습니다(world/ftbchunks). 이대로면 모든 땅이 지워지므로 멈춥니다.')
+  console.log('\n남긴 청크 밖의 건물 · 상자는 사라집니다. 대륙 · 던전 차원과 플레이어 인벤토리 · 레벨 · 돈은 그대로입니다.')
+  if (await ask("정말 초기화하려면 '초기화' 를 입력하세요 (그냥 Enter = 취소): ") !== '초기화') {
+    console.log('취소했습니다.')
+    return process.exit(0)
+  }
+  // 백업을 꺼 둔 서버라도 초기화 전에는 한 번 받는다
+  if (!(await runBackup(serverDir, { ...cfg, backup: { ...(cfg.backup || {}), enabled: true } }))) throw new Error('백업을 못 해서 초기화하지 않았습니다.')
+  console.log('초기화 중...')
+  const r = worldReset.applyReset(plan, { log: console.log })
+  console.log(`✔ 맵 초기화 끝: region · entities · poi 파일 고쳐 씀 ${r.rewritten}개 · 지움 ${r.deleted}개` + (r.warnings.length ? ` · 경고 ${r.warnings.length}개(위)` : ''))
+  console.log('  되돌리려면 서버를 끈 채 백업복원.bat 에서 방금 백업을 고르세요.')
+  return process.exit(0)
 }
 
 async function runBackup (serverDir, cfg) {
