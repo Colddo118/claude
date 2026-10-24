@@ -61,8 +61,19 @@ async function publishRelease ({ repo, token, version, notes, files, log = () =>
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`저장소 이름 형식이 잘못되었습니다: ${repo} (예: myname/modpack)`)
   if (!token) throw new Error('GITHUB_TOKEN 환경변수가 필요합니다 (README 의 토큰 만들기 참고)')
 
+  // 업로드 도중 창을 닫는 등으로 남은 같은 버전의 초안이 있으면 공개 단계에서 "tag_name already_exists" 로 막힌다.
+  // 그런 초안은 미리 지우고, 이미 공개된 같은 버전이 있으면 올리기 전에 알려준다.
+  const tag = releaseTag(version)
+  const existing = await api(token, 'GET', `${API()}/repos/${repo}/releases?per_page=100`)
+  for (const r of Array.isArray(existing) ? existing : []) {
+    if (r.tag_name !== tag) continue
+    if (!r.draft) throw new Error(`GitHub 에 이미 v${version} 릴리스가 있습니다. 버전을 올려서 다시 배포하세요.`)
+    log(`  (지난번에 끝나지 못한 v${version} 초안을 지웁니다)`)
+    await api(token, 'DELETE', `${API()}/repos/${repo}/releases/${r.id}`)
+  }
+
   const release = await api(token, 'POST', `${API()}/repos/${repo}/releases`, {
-    tag_name: releaseTag(version),
+    tag_name: tag,
     name: `모드팩 v${version}`,
     body: notes || '',
     draft: true
