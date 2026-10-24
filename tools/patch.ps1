@@ -49,6 +49,18 @@ function Read-Token {
   throw '토큰을 받지 못했습니다. patch.bat 을 다시 실행하세요.'
 }
 
+# 토큰으로 저장소 정보를 받아 본다. 401/403 = 거부된 토큰. 인터넷 문제 등은 여기서 막지 않고 빌드 단계에 맡긴다.
+function Test-Token($secure) {
+  try {
+    $headers = @{ Authorization = "Bearer $((Plain $secure).Trim())"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'kubejsrpg-patch' }
+    Invoke-RestMethod "https://api.github.com/repos/$repo" -Headers $headers -TimeoutSec 15 | Out-Null
+    return $true
+  } catch {
+    $code = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+    return -not ($code -in 401, 403)
+  }
+}
+
 function Save-Settings($s) {
   ($s | ConvertTo-Json) | Set-Content $LocalFile -Encoding UTF8
 }
@@ -204,9 +216,21 @@ $secure = $null
 if ($settings.token) {
   try { $secure = ConvertTo-SecureString $settings.token } catch { $secure = $null }
 }
+# 빌드·업로드(오래 걸림)를 다 하고 나서야 토큰이 틀렸다고 끝나지 않게, 먼저 GitHub 에 한 번 물어본다
+if ($secure -and -not (Test-Token $secure)) {
+  Write-Host '저장된 GitHub 토큰이 만료되었거나 잘못되었습니다. 새 토큰을 입력하세요.' -ForegroundColor Yellow
+  $settings.token = ''
+  Save-Settings $settings
+  $secure = $null
+}
 $tokenIsNew = $false
 if (-not $secure) {
-  $secure = Read-Token
+  for ($i = 1; ; $i++) {
+    $secure = Read-Token
+    if (Test-Token $secure) { break }
+    if ($i -ge 3) { throw 'GitHub 가 토큰을 받아주지 않습니다. 새 토큰을 만들어 patch.bat 을 다시 실행하세요.' }
+    Write-Host 'GitHub 가 이 토큰을 거부했습니다 (만료됐거나 잘못 복사됨). 다시 붙여넣으세요.' -ForegroundColor Yellow
+  }
   $tokenIsNew = $true
   # 업로드가 오래 걸려 창을 닫아도 남도록, 넣자마자 저장할지 묻는다 (업로드가 실패하면 아래에서 지움)
   if (Ask-YesNo '토큰을 이 컴퓨터(이 윈도우 계정)에만 풀 수 있게 암호화해서 저장할까요? 다음부터 입력 안 해도 됩니다') {

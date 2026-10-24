@@ -205,7 +205,7 @@ Attempted to load class net/minecraft/client/... for invalid dist DEDICATED_SERV
 
 - GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token
 - Repository access: `modpack` 만 / Permissions: **Contents: Read and write** / 만료 기간 지정 (예: 1년)
-- 저장된 토큰이 만료되면 patch.bat 이 알려주고 다음 실행 때 새로 물어봅니다.
+- 저장된 토큰이 만료되면 patch.bat 이 빌드 전에 알아채고 그 자리에서 새 토큰을 물어봅니다.
 - 토큰을 채팅·디스코드에 붙여넣지 마세요. 노출되면 GitHub 에서 바로 Delete.
 
 ## 런처 배포: `launcher.bat`
