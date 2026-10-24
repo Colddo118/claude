@@ -47,6 +47,10 @@ before(async () => {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           return res.end(JSON.stringify({ message: 'Bad credentials' }))
         }
+        if (req.headers.authorization === 'Bearer taken') {
+          res.writeHead(422, { 'Content-Type': 'application/json' })
+          return res.end(JSON.stringify({ message: 'Validation Failed', errors: [{ resource: 'Release', code: 'already_exists', field: 'tag_name' }] }))
+        }
         res.writeHead(req.method === 'POST' ? 201 : 200, { 'Content-Type': 'application/json' })
         if (url.pathname === '/api/repos/me/modpack/releases') {
           return res.end(JSON.stringify({ id: 7, upload_url: `${base}/uploads/repos/me/modpack/releases/7/assets{?name,label}` }))
@@ -206,6 +210,18 @@ test('GitHub 릴리스 자동 게시: 초안 → 파일 첨부 → 공개 순서
   assert.deepEqual(JSON.parse(api[3].body), { draft: false, make_latest: 'true' })
   await assert.rejects(publishRelease({ repo: 'me/modpack', version: '2.0.0', files: [] }), /GITHUB_TOKEN/)
   delete process.env.GITHUB_API_URL
+})
+
+test('GitHub 422 오류는 errors 안의 실제 원인까지 보여준다', async () => {
+  const zip = path.join(tmp, 'v422.zip')
+  write(tmp, 'v422.zip', 'zip')
+  process.env.GITHUB_API_URL = `${base}/api`
+  try {
+    await assert.rejects(publishRelease({ repo: 'me/modpack', token: 'taken', version: '2.0.1', notes: '', files: [zip] }),
+      /\(422\): Validation Failed — tag_name already_exists/)
+  } finally {
+    delete process.env.GITHUB_API_URL
+  }
 })
 
 test('커스포지 CDN 주소 만들기', () => {

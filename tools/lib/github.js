@@ -42,7 +42,12 @@ async function api (token, method, url, body, headers = {}) {
   const text = await res.text()
   if (!res.ok) {
     let msg = text
-    try { msg = JSON.parse(text).message } catch {}
+    try {
+      const j = JSON.parse(text)
+      // 422 "Validation Failed" 만으로는 원인을 알 수 없어서, GitHub 가 같이 주는 errors 의 내용까지 보여준다
+      const details = (Array.isArray(j.errors) ? j.errors : []).map(e => typeof e === 'string' ? e : e.message || [e.field, e.code].filter(Boolean).join(' ')).filter(Boolean)
+      msg = details.length ? `${j.message} — ${details.join(', ')}` : j.message
+    } catch {}
     throw Object.assign(new Error(`GitHub API ${method} ${new URL(url).pathname} 실패 (${res.status}): ${msg}`), { status: res.status })
   }
   return text ? JSON.parse(text) : null
