@@ -184,6 +184,8 @@ if (-not (Test-Path $notesFile)) {
 }
 Write-Host '메모장이 열리면 패치노트를 쓰고 저장한 뒤 닫으세요.'
 Start-Process notepad.exe -ArgumentList "`"$notesFile`"" -Wait
+# 런처에 보이는 패치노트 목록을 처음부터 다시 쓰고 싶을 때만 y (그냥 Enter = 이전 기록 아래에 이어 붙임)
+$resetNotes = Ask-YesNo '지금까지의 패치노트 기록을 모두 지우고 이번 패치노트부터 새로 시작할까요? 그냥 Enter = 이어 붙이기'
 
 # --- (선택) 같은 네트워크의 서버 폴더에 직접 반영 ---
 if ($settings.serverDir) {
@@ -221,6 +223,7 @@ try {
   try {
     $buildArgs = @("$Tools\build-manifest.js", '--source', $settings.instance, '--out', $OutDir, '--version', $version, '--notes-file', $notesFile, '--publish')
     if ($pushMap) { $buildArgs += '--map' }
+    if ($resetNotes) { $buildArgs += '--reset-notes' }
     Run-Node $buildArgs
   } catch {
     if ($settings.token) {

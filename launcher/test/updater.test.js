@@ -240,3 +240,16 @@ test('pack.config.json 의 exclude 는 기본 제외 목록에 더해진다', as
     ['mods/a.jar', undefined]
   ])
 })
+
+test('--reset-notes 면 이전 패치노트 기록을 버리고 이번 것부터 새로 쌓는다', async () => {
+  const src = path.join(tmp, 'reset-notes-src')
+  const out = path.join(tmp, 'reset-notes-out')
+  write(src, 'minecraftinstance.json', JSON.stringify({ gameVersion: '1.21.1', baseModLoader: { name: 'neoforge-21.1.77' } }))
+  write(src, 'mods/a.jar', 'a')
+  await build({ source: src, out, version: '1.0.0', notes: '- 첫 배포' })
+  await build({ source: src, out, version: '1.0.1', notes: '- 두 번째' })
+  const r = await build({ source: src, out, version: '1.0.2', notes: '- 새 출발', 'reset-notes': true })
+  assert.deepEqual(r.manifest.changelog.map(c => [c.version, c.notes]), [['1.0.2', '- 새 출발']])
+  const next = await build({ source: src, out, version: '1.0.3', notes: '- 그다음' })
+  assert.deepEqual(next.manifest.changelog.map(c => c.version), ['1.0.3', '1.0.2'])
+})

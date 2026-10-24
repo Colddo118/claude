@@ -60,7 +60,7 @@ const DEFAULT_CONFIG = {
   changelogLimit: 30
 }
 
-const FLAG_OPTIONS = ['force', 'help', 'publish', 'no-cdn', 'no-modrinth', 'no-url-check', 'map']
+const FLAG_OPTIONS = ['force', 'help', 'publish', 'no-cdn', 'no-modrinth', 'no-url-check', 'map', 'reset-notes']
 const VALUE_OPTIONS = ['source', 'out', 'version', 'notes', 'notes-file', 'config', 'github']
 
 function parseArgs (argv) {
@@ -95,6 +95,7 @@ const USAGE = `사용법:
   --no-url-check  CDN 주소 확인(HEAD 요청)을 건너뛴다
   --map           싱글 월드에서 바뀐 대륙 맵(pack.config.json 의 "map")을 서버 패키지에 싣는다.
                   안 주면 서버 맵은 지난 패치 그대로 둔다
+  --reset-notes   지금까지의 패치노트 기록을 지우고 이번 패치노트부터 새로 시작
   --force         같은 버전으로 다시 빌드 허용`
 
 // 커스포지 인스턴스의 minecraftinstance.json 에서 MC/로더 버전을 읽는다.
@@ -518,7 +519,7 @@ async function build ({ source, out, version, notes, config: configPath, force, 
     }
   }
 
-  const history = (previous && Array.isArray(previous.changelog) ? previous.changelog : [])
+  const history = (!flags['reset-notes'] && previous && Array.isArray(previous.changelog) ? previous.changelog : [])
     .filter(c => c.version !== version)
   const changelog = [
     { version, date: new Date().toISOString().slice(0, 10), notes: (notes || '').trim() },
