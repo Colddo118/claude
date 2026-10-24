@@ -672,7 +672,8 @@ async function main () {
 if (require.main === module) {
   main().catch(e => {
     console.error(`✘ ${e.message}${e.cause ? ` (${e.cause.code || e.cause.message})` : ''}`)
-    process.exit(1)
+    // 2 = GitHub 가 토큰을 거부함 (patch.ps1 은 이때만 저장된 토큰을 지운다)
+    process.exit(e.status === 401 || e.status === 403 ? 2 : 1)
   })
 }
 

@@ -228,7 +228,7 @@ test('GitHub 업로드가 실패하면 로컬 기록은 이전 상태 그대로,
     (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr })))
 
   const bad = await run('bad')
-  assert.equal(bad.code, 1)
+  assert.equal(bad.code, 2) // 토큰 거부는 따로 알려서 patch.ps1 이 저장된 토큰을 지우게 한다
   assert.match(bad.stderr, /401.*Bad credentials/)
   assert.equal(read(out, 'manifest.json'), prev) // 실패한 1.0.0 이 "배포됨" 으로 남지 않는다
 

@@ -226,10 +226,14 @@ try {
     if ($resetNotes) { $buildArgs += '--reset-notes' }
     Run-Node $buildArgs
   } catch {
-    if ($settings.token) {
-      Write-Host '토큰이 만료되었거나 잘못되었을 수 있습니다. 다음 실행 때 새 토큰을 물어보도록 저장된 토큰을 지웁니다.' -ForegroundColor Yellow
-      $settings.token = ''
-      Save-Settings $settings
+    if ($LASTEXITCODE -eq 2) {
+      if ($settings.token) {
+        Write-Host 'GitHub 가 토큰을 거부했습니다 (만료되었거나 권한 부족). 다음 실행 때 새 토큰을 물어보도록 저장된 토큰을 지웁니다.' -ForegroundColor Yellow
+        $settings.token = ''
+        Save-Settings $settings
+      }
+    } else {
+      Write-Host '토큰 문제는 아닙니다 (저장된 토큰은 그대로 둠). 위의 ✘ 로 시작하는 줄이 실제 원인입니다.' -ForegroundColor Yellow
     }
     throw
   }
