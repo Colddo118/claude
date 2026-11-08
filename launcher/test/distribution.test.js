@@ -19,6 +19,7 @@ let tmp, server, base
 const hits = []
 const api = []
 const modrinthIndex = {} // sha1 → 모드린스 버전 정보 (가짜)
+let releases = [] // 가짜 GitHub 에 이미 있는 릴리스 목록
 
 function write (root, rel, content) {
   const p = path.join(root, ...rel.split('/'))
@@ -47,7 +48,12 @@ before(async () => {
           res.writeHead(401, { 'Content-Type': 'application/json' })
           return res.end(JSON.stringify({ message: 'Bad credentials' }))
         }
+        if (req.headers.authorization === 'Bearer taken') {
+          res.writeHead(422, { 'Content-Type': 'application/json' })
+          return res.end(JSON.stringify({ message: 'Validation Failed', errors: [{ resource: 'Release', code: 'already_exists', field: 'tag_name' }] }))
+        }
         res.writeHead(req.method === 'POST' ? 201 : 200, { 'Content-Type': 'application/json' })
+        if (url.pathname === '/api/repos/me/modpack/releases' && req.method === 'GET') return res.end(JSON.stringify(releases))
         if (url.pathname === '/api/repos/me/modpack/releases') {
           return res.end(JSON.stringify({ id: 7, upload_url: `${base}/uploads/repos/me/modpack/releases/7/assets{?name,label}` }))
         }
@@ -196,16 +202,43 @@ test('GitHub 릴리스 자동 게시: 초안 → 파일 첨부 → 공개 순서
   await publishRelease({ repo: 'me/modpack', token: 't', version: '2.0.0', notes: '- 노트', files: [zip, man] })
   // 파일은 동시에 올리므로 도착 순서는 상관없다. 초안 만들기가 먼저, 공개가 맨 마지막이면 된다
   const calls = api.map(a => `${a.method} ${a.path}${a.query}`)
-  assert.deepEqual([calls[0], ...calls.slice(1, -1).sort(), calls.at(-1)], [
+  assert.deepEqual([calls[0], calls[1], ...calls.slice(2, -1).sort(), calls.at(-1)], [
+    'GET /api/repos/me/modpack/releases?per_page=100',
     'POST /api/repos/me/modpack/releases',
     'POST /uploads/repos/me/modpack/releases/7/assets?name=manifest.json',
     'POST /uploads/repos/me/modpack/releases/7/assets?name=pack-2.0.0.zip',
     'PATCH /api/repos/me/modpack/releases/7'
   ])
-  assert.deepEqual(JSON.parse(api[0].body), { tag_name: 'pack-2.0.0', name: '모드팩 v2.0.0', body: '- 노트', draft: true })
-  assert.deepEqual(JSON.parse(api[3].body), { draft: false, make_latest: 'true' })
+  assert.deepEqual(JSON.parse(api[1].body), { tag_name: 'pack-2.0.0', name: '모드팩 v2.0.0', body: '- 노트', draft: true })
+  assert.deepEqual(JSON.parse(api[4].body), { draft: false, make_latest: 'true' })
+
+  // 지난번에 끝나지 못한 같은 버전의 초안은 지우고 다시 만든다 (남아 있으면 공개 때 tag_name already_exists)
+  releases = [{ id: 5, tag_name: 'pack-2.0.0', draft: true }, { id: 4, tag_name: 'pack-1.9.0', draft: false }]
+  api.length = 0
+  await publishRelease({ repo: 'me/modpack', token: 't', version: '2.0.0', notes: '', files: [zip] })
+  assert.deepEqual(api.slice(0, 3).map(a => `${a.method} ${a.path}`), [
+    'GET /api/repos/me/modpack/releases', 'DELETE /api/repos/me/modpack/releases/5', 'POST /api/repos/me/modpack/releases'
+  ])
+  // 이미 공개된 같은 버전이면 아무것도 올리기 전에 멈춘다
+  releases = [{ id: 6, tag_name: 'pack-2.0.0', draft: false }]
+  api.length = 0
+  await assert.rejects(publishRelease({ repo: 'me/modpack', token: 't', version: '2.0.0', notes: '', files: [zip] }), /이미 v2\.0\.0 릴리스가 있습니다/)
+  assert.equal(api.length, 1)
+  releases = []
   await assert.rejects(publishRelease({ repo: 'me/modpack', version: '2.0.0', files: [] }), /GITHUB_TOKEN/)
   delete process.env.GITHUB_API_URL
+})
+
+test('GitHub 422 오류는 errors 안의 실제 원인까지 보여준다', async () => {
+  const zip = path.join(tmp, 'v422.zip')
+  write(tmp, 'v422.zip', 'zip')
+  process.env.GITHUB_API_URL = `${base}/api`
+  try {
+    await assert.rejects(publishRelease({ repo: 'me/modpack', token: 'taken', version: '2.0.1', notes: '', files: [zip] }),
+      /\(422\): Validation Failed — tag_name already_exists/)
+  } finally {
+    delete process.env.GITHUB_API_URL
+  }
 })
 
 test('커스포지 CDN 주소 만들기', () => {
@@ -228,7 +261,7 @@ test('GitHub 업로드가 실패하면 로컬 기록은 이전 상태 그대로,
     (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr })))
 
   const bad = await run('bad')
-  assert.equal(bad.code, 1)
+  assert.equal(bad.code, 2) // 토큰 거부는 따로 알려서 patch.ps1 이 저장된 토큰을 지우게 한다
   assert.match(bad.stderr, /401.*Bad credentials/)
   assert.equal(read(out, 'manifest.json'), prev) // 실패한 1.0.0 이 "배포됨" 으로 남지 않는다
 

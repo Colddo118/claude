@@ -49,6 +49,18 @@ function Read-Token {
   throw '토큰을 받지 못했습니다. patch.bat 을 다시 실행하세요.'
 }
 
+# 토큰으로 저장소 정보를 받아 본다. 401/403 = 거부된 토큰. 인터넷 문제 등은 여기서 막지 않고 빌드 단계에 맡긴다.
+function Test-Token($secure) {
+  try {
+    $headers = @{ Authorization = "Bearer $((Plain $secure).Trim())"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'kubejsrpg-patch' }
+    Invoke-RestMethod "https://api.github.com/repos/$repo" -Headers $headers -TimeoutSec 15 | Out-Null
+    return $true
+  } catch {
+    $code = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+    return -not ($code -in 401, 403)
+  }
+}
+
 function Save-Settings($s) {
   ($s | ConvertTo-Json) | Set-Content $LocalFile -Encoding UTF8
 }
@@ -69,6 +81,16 @@ function Map-Run([string[]]$mapArgs) {
 
 function Map-Status {
   return (Map-Run @('status') | Select-Object -Last 1) | ConvertFrom-Json
+}
+
+# 패치노트 초안 (인스턴스 kubejs/dev/patch_draft — 작업 세션들이 그때그때 적어 둔다)
+#  --md <파일> = 메모장에 띄울 패치노트를 초안으로 채움 · --apply = 게임 패치노트(kubejs/config/patch_notes.json)에 넣고 초안 비움
+#  파이썬이나 초안이 없으면 아무것도 안 하고 옛 방식(빈 틀)대로 간다
+function Draft-Run([string[]]$draftArgs) {
+  $script = Join-Path $settings.instance 'kubejs\dev\patch_draft\build.py'
+  if (-not (Test-Path $script) -or -not (Get-Command python -ErrorAction SilentlyContinue)) { return $false }
+  & python -X utf8 $script @draftArgs | ForEach-Object { Write-Host $_ -ForegroundColor DarkCyan }
+  return ($LASTEXITCODE -eq 0)
 }
 
 Write-Host ''
@@ -177,13 +199,19 @@ if (-not $version) { throw '버전을 입력해 주세요.' }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $notesFile = Join-Path $OutDir "notes-$version.md"
 if (-not (Test-Path $notesFile)) {
+  $filled = $false
+  try { $filled = Draft-Run @('--md', $notesFile) } catch { $filled = $false }
+  if (-not $filled -or -not (Test-Path $notesFile)) {
   @"
 ## 변경 사항
 - 
 "@ | Set-Content $notesFile -Encoding UTF8
+  }
 }
 Write-Host '메모장이 열리면 패치노트를 쓰고 저장한 뒤 닫으세요.'
 Start-Process notepad.exe -ArgumentList "`"$notesFile`"" -Wait
+# 런처에 보이는 패치노트 목록을 처음부터 다시 쓰고 싶을 때만 y (그냥 Enter = 이전 기록 아래에 이어 붙임)
+$resetNotes = Ask-YesNo '지금까지의 패치노트 기록을 모두 지우고 이번 패치노트부터 새로 시작할까요? 그냥 Enter = 이어 붙이기'
 
 # --- (선택) 같은 네트워크의 서버 폴더에 직접 반영 ---
 if ($settings.serverDir) {
@@ -198,13 +226,29 @@ if ($settings.serverDir) {
 # --- 2. GitHub 토큰 ---
 Write-Host ''
 if (-not (Ask-YesNo "v$version 을 배포할까요?")) { Write-Host '취소했습니다.'; exit 0 }
+# 게임 안 [패치노트] 창에도 이번 패치 카드를 싣는다 (빌드 전에 — 이번 배포에 같이 들어감)
+try {
+  if (-not (Draft-Run @('--apply', '--version', $version))) { Write-Host '게임 패치노트 초안을 넣지 못했습니다 (배포는 계속). 위 줄을 확인하세요.' -ForegroundColor Yellow }
+} catch { Write-Host "게임 패치노트 초안을 넣지 못했습니다 (배포는 계속): $_" -ForegroundColor Yellow }
 $secure = $null
 if ($settings.token) {
   try { $secure = ConvertTo-SecureString $settings.token } catch { $secure = $null }
 }
+# 빌드·업로드(오래 걸림)를 다 하고 나서야 토큰이 틀렸다고 끝나지 않게, 먼저 GitHub 에 한 번 물어본다
+if ($secure -and -not (Test-Token $secure)) {
+  Write-Host '저장된 GitHub 토큰이 만료되었거나 잘못되었습니다. 새 토큰을 입력하세요.' -ForegroundColor Yellow
+  $settings.token = ''
+  Save-Settings $settings
+  $secure = $null
+}
 $tokenIsNew = $false
 if (-not $secure) {
-  $secure = Read-Token
+  for ($i = 1; ; $i++) {
+    $secure = Read-Token
+    if (Test-Token $secure) { break }
+    if ($i -ge 3) { throw 'GitHub 가 토큰을 받아주지 않습니다. 새 토큰을 만들어 patch.bat 을 다시 실행하세요.' }
+    Write-Host 'GitHub 가 이 토큰을 거부했습니다 (만료됐거나 잘못 복사됨). 다시 붙여넣으세요.' -ForegroundColor Yellow
+  }
   $tokenIsNew = $true
   # 업로드가 오래 걸려 창을 닫아도 남도록, 넣자마자 저장할지 묻는다 (업로드가 실패하면 아래에서 지움)
   if (Ask-YesNo '토큰을 이 컴퓨터(이 윈도우 계정)에만 풀 수 있게 암호화해서 저장할까요? 다음부터 입력 안 해도 됩니다') {
@@ -221,12 +265,17 @@ try {
   try {
     $buildArgs = @("$Tools\build-manifest.js", '--source', $settings.instance, '--out', $OutDir, '--version', $version, '--notes-file', $notesFile, '--publish')
     if ($pushMap) { $buildArgs += '--map' }
+    if ($resetNotes) { $buildArgs += '--reset-notes' }
     Run-Node $buildArgs
   } catch {
-    if ($settings.token) {
-      Write-Host '토큰이 만료되었거나 잘못되었을 수 있습니다. 다음 실행 때 새 토큰을 물어보도록 저장된 토큰을 지웁니다.' -ForegroundColor Yellow
-      $settings.token = ''
-      Save-Settings $settings
+    if ($LASTEXITCODE -eq 2) {
+      if ($settings.token) {
+        Write-Host 'GitHub 가 토큰을 거부했습니다 (만료되었거나 권한 부족). 다음 실행 때 새 토큰을 물어보도록 저장된 토큰을 지웁니다.' -ForegroundColor Yellow
+        $settings.token = ''
+        Save-Settings $settings
+      }
+    } else {
+      Write-Host '토큰 문제는 아닙니다 (저장된 토큰은 그대로 둠). 위의 ✘ 로 시작하는 줄이 실제 원인입니다.' -ForegroundColor Yellow
     }
     throw
   }

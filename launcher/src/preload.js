@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('launcher', {
   login: () => ipcRenderer.invoke('account:login'),
   logout: () => ipcRenderer.invoke('account:logout'),
   saveSettings: s => ipcRenderer.invoke('settings:save', s),
+  changeDataDir: opts => ipcRenderer.invoke('data:change', opts),
+  pickJava: opts => ipcRenderer.invoke('java:pick', opts),
   open: what => ipcRenderer.invoke('shell:open', what),
   onProgress: cb => subscribe('progress', cb),
   onGameExit: cb => subscribe('game:exit', cb),

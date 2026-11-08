@@ -455,7 +455,31 @@ input[type=range]::-webkit-slider-thumb {
   outline-offset: calc(var(--u) * -1);
 }
 
-.settings-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: calc(var(--u) * 2); }
+/* 게임 파일 위치: 경로 한 줄(길면 가운데를 … 로 줄임 · 전체는 마우스를 올리면) + 버튼 */
+.settings-form .field { display: flex; flex-direction: column; gap: var(--u); }
+.data-dir-row { display: flex; gap: calc(var(--u) * 2); height: calc(var(--u) * 11); }
+.data-dir {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  font: 18px/1 var(--body);
+  color: var(--text);
+  padding: 0 calc(var(--u) * 3);
+  background: var(--field);
+  border: var(--u) solid var(--well-edge);
+  white-space: nowrap;
+  overflow: hidden;
+  user-select: text;
+}
+.data-dir-row button { flex: none; padding: 0 calc(var(--u) * 3); font-size: 18px; }
+/* JVM 인자 · Java — 이름을 왼쪽에 붙인 한 줄(Java 칸을 늘려도 740 높이에 스크롤 없이 · 10-25) */
+.field-inline { display: grid; grid-template-columns: calc(var(--u) * 30) 1fr; align-items: center; }
+.field-inline > :first-child { white-space: nowrap; }
+.field-inline > :last-child { min-width: 0; }
+.settings-form .field-inline input[type=text] { min-width: 0; }
+
+.settings-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(var(--u) * 2); }
 .settings-actions button { padding: 0 calc(var(--u) * 2); font-size: 18px; }
 .dialog-buttons { display: flex; justify-content: flex-end; gap: calc(var(--u) * 4); }
 .dialog-buttons .primary { min-width: calc(var(--u) * 50); }

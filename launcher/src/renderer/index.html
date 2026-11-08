@@ -87,14 +87,30 @@
         <label class="check">
           <input id="hide-input" type="checkbox"> 게임 실행 중 런처 숨기기
         </label>
-        <label class="field">
-          <span>JVM 인자 <span class="muted">(고급 · 보통 비워 둠)</span></span>
-          <input id="jvm-input" type="text" placeholder="-XX:+UseG1GC">
+        <label class="field-inline" title="고급 설정 · 보통 비워 둡니다">
+          <span>JVM 인자</span>
+          <input id="jvm-input" type="text" placeholder="고급 · 보통 비워 둠 (예: -XX:+UseG1GC)">
         </label>
+        <div class="field-inline" title="보통 자동(런처가 받은 Java). 직접 고르려면 Java 21 이상">
+          <span>Java</span>
+          <div class="data-dir-row">
+            <span id="java-path" class="data-dir"></span>
+            <button type="button" id="java-pick-btn" class="ghost">찾아보기</button>
+            <button type="button" id="java-auto-btn" class="ghost">자동</button>
+          </div>
+        </div>
+        <div class="field">
+          <span>게임 파일 위치 <span class="muted">(모드팩 · 자바 · 몇 GB)</span></span>
+          <div class="data-dir-row">
+            <span id="data-dir" class="data-dir"></span>
+            <button type="button" id="open-folder-btn" class="ghost">열기</button>
+            <button type="button" id="data-change-btn" class="ghost">옮기기</button>
+            <button type="button" id="data-default-btn" class="ghost">기본으로</button>
+          </div>
+        </div>
       </section>
 
       <div class="settings-actions">
-        <button type="button" id="open-folder-btn" class="ghost">게임 폴더 열기</button>
         <button type="button" id="open-logs-btn" class="ghost">로그 폴더 열기</button>
         <button type="button" id="repair-btn" class="ghost">파일 검사/복구</button>
         <button type="button" id="share-log-settings-btn" class="ghost">로그 공유하기</button>

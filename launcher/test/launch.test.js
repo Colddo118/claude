@@ -158,3 +158,14 @@ test('게임 파일 받기: 일시적 실패는 다시 시도하고, 끝내 실�
   await assert.rejects(withRetry(async () => { throw agg }, 2), /게임 파일 2개를 받지 못했습니다.*ETIMEDOUT 1\.2\.3\.4/)
   await assert.rejects(withRetry(async () => { throw new Error('plain') }, 1), /^Error: plain$/)
 })
+
+test('설정 Java: -version 읽기 · 파일 이름 · 버전 거부', async () => {
+  const { parseJavaMajor, checkJavaExecutable } = require('../src/main/game')
+  assert.equal(parseJavaMajor('openjdk version "21.0.2" 2024-01-16 LTS'), 21)
+  assert.equal(parseJavaMajor('java version "1.8.0_402"'), 8)
+  assert.equal(parseJavaMajor('openjdk version "17" 2021-09-14'), 17)
+  assert.equal(parseJavaMajor('garbage'), 0)
+  assert.match((await checkJavaExecutable(path.join(os.tmpdir(), 'notjava.exe'), 21)).error, /Java 실행 파일/)
+  const exe = process.platform === 'win32' ? 'javaw.exe' : 'java'
+  assert.match((await checkJavaExecutable(path.join(os.tmpdir(), 'no-such-dir-kjrpg', exe), 21)).error, /파일이 없습니다/)
+})

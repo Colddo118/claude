@@ -64,6 +64,8 @@
    }
    ```
    - `dataFolderName`: 유저 PC 의 `%APPDATA%\<이름>` 에 게임이 설치됨. 배포 후엔 바꾸지 마세요.
+     유저는 런처 설정창에서 게임 파일만 다른 드라이브로 옮길 수 있습니다(설정 · 계정은 여기 남고, 옮긴 위치는 `data-location.json` 에 기록).
+     런처 설치 폴더 안으로는 못 옮깁니다 — 런처 업데이트 때 설치 폴더가 통째로 지워지기 때문.
    - `manifestUrl`: 아래 2번에서 만들 호스팅 주소
 2. 필요하면 `launcher/package.json` 의 `productName`, `build.appId` 도 서버 이름으로 변경
 3. 빌드

@@ -80,6 +80,9 @@ patch.bat 으로 내보냅니다. 서버 폴더를 직접 고치면 다음 패�
 2. 서버 컴: 서버 콘솔에 `stop` → **`서버시작.bat`** 더블클릭
 3. 친구들: 런처를 켜면 업데이트가 뜸
 
+패치노트를 처음부터 다시 쓰고 싶으면: 메모장을 닫은 뒤 "패치노트 기록을 모두 지우고 … 새로 시작할까요?" 에 `y`.
+런처에 보이는 예전 패치노트가 전부 사라지고 이번 패치노트 하나만 남습니다 (모드·파일은 그대로, 평소엔 Enter).
+
 patch.bat 이 "서버 키트가 바뀌었습니다" 라고 하면 (도구가 업데이트된 경우, 드묾)
 그 폴더의 파일을 서버 컴에 다시 복사하세요.
 
@@ -202,7 +205,7 @@ Attempted to load class net/minecraft/client/... for invalid dist DEDICATED_SERV
 
 - GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token
 - Repository access: `modpack` 만 / Permissions: **Contents: Read and write** / 만료 기간 지정 (예: 1년)
-- 저장된 토큰이 만료되면 patch.bat 이 알려주고 다음 실행 때 새로 물어봅니다.
+- 저장된 토큰이 만료되면 patch.bat 이 빌드 전에 알아채고 그 자리에서 새 토큰을 물어봅니다.
 - 토큰을 채팅·디스코드에 붙여넣지 마세요. 노출되면 GitHub 에서 바로 Delete.
 
 ## 런처 배포: `launcher.bat`
@@ -219,6 +222,8 @@ Attempted to load class net/minecraft/client/... for invalid dist DEDICATED_SERV
 - 버전 번호는 `launcher/package.json` 의 `version` 입니다 (설정 창 제목 옆에 보임).
   **런처를 고칠 때마다 이 숫자를 올려야** 친구들 런처가 새 버전을 알아챕니다 (예: 0.3.0 → 0.3.1).
 - **v0.3.0 부터 런처가 스스로 업데이트**합니다: 켤 때 새 버전이 있으면 받아서 조용히 설치하고 다시 켜집니다.
+- **v0.4.0 부터 설치 파일이 설치 폴더를 물어봅니다** (기본 `%LOCALAPPDATA%\Programs\KubejsRPG`, 고른 폴더 끝에 `KubejsRPG` 가 자동으로 붙음).
+  자동 업데이트는 처음 고른 폴더에 그대로 다시 깝니다. 업데이트 때 설치 폴더는 통째로 지워지므로 게임 파일은 그 밖(기본 `%APPDATA%\kubejsrpg-launcher`, 설정창에서 옮김)에 둡니다.
   그 이전 버전(0.2.x)을 쓰는 친구만 설치 파일을 한 번 다시 실행하면 됩니다.
 
 ## 런처 공지: `notice.bat`
