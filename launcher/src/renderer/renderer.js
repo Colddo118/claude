@@ -295,6 +295,9 @@ api.onProgress(p => {
   if (p.phase === 'download') {
     setStatus('모드팩 받는 중', { detail: formatPair(p.current, p.total) })
     setProgress(p.current, p.total, true)
+  } else if (p.phase === 'move' && p.total) {
+    setStatus('게임 파일 옮기는 중', { detail: formatPair(p.current, p.total) })
+    setProgress(p.current, p.total, true)
   } else if (p.phase === 'verify') {
     setStatus('파일 확인 중')
     setProgress(p.current, p.total, true)
@@ -342,10 +345,32 @@ $('settings-btn').addEventListener('click', () => {
   $('autoconnect-input').checked = s.autoConnect
   $('hide-input').checked = s.hideOnLaunch
   $('jvm-input').value = s.jvmArgs
+  pendingJava = s.javaPath || ''
+  showJava()
+  showDataDir()
   showMem()
   dialog.showModal()
 })
 memInput.addEventListener('input', showMem)
+
+// Java: 비우면 자동(런처가 받은 Java 21) · [찾아보기]로 고른 경로는 [저장]을 눌러야 남는다
+let pendingJava = ''
+function showJava () {
+  $('java-path').textContent = pendingJava ? shortPath(pendingJava) : '자동 (런처가 받은 Java)'
+  $('java-path').title = pendingJava
+  $('java-auto-btn').disabled = !pendingJava
+}
+$('java-pick-btn').addEventListener('click', async () => {
+  const r = await api.pickJava({ current: pendingJava })
+  if (r && r.path) {
+    pendingJava = r.path
+    showJava()
+  }
+})
+$('java-auto-btn').addEventListener('click', () => {
+  pendingJava = ''
+  showJava()
+})
 
 dialog.addEventListener('close', async () => {
   if (dialog.returnValue !== 'save') return
@@ -353,10 +378,44 @@ dialog.addEventListener('close', async () => {
     memoryMB: Number(memInput.value),
     autoConnect: $('autoconnect-input').checked,
     hideOnLaunch: $('hide-input').checked,
-    jvmArgs: $('jvm-input').value
+    jvmArgs: $('jvm-input').value,
+    javaPath: pendingJava
   })
   setStatus('설정을 저장했습니다.')
 })
+
+// 긴 경로는 드라이브 + … + 마지막 폴더만 (C:\…\kubejsrpg-launcher) · 전체는 마우스를 올리면
+function shortPath (p) {
+  const parts = String(p || '').split(/[\\/]+/).filter(Boolean)
+  if (parts.length <= 3) return p || ''
+  return [parts[0], '…', parts[parts.length - 1]].join('\\')
+}
+
+function showDataDir () {
+  const s = info.settings
+  $('data-dir').textContent = shortPath(s.dataDir)
+  $('data-dir').title = s.dataDir || ''
+  $('data-default-btn').classList.toggle('hidden', !!s.dataDirIsDefault)
+}
+
+// 게임 파일 위치 바꾸기: 폴더 고르기 · 확인 창은 런처 본체가 띄우고, 옮기는 동안은 아래 진행 막대에 표시
+async function changeDataDir (toDefault) {
+  if (busy || gameRunning) return
+  dialog.close()
+  const settings = await run(async () => {
+    const s = await api.changeDataDir({ toDefault })
+    if (s) {
+      info.settings = s
+      setStatus('게임 파일 위치를 바꿨어요', { detail: s.dataDir })
+      setProgress(1, 1)
+    }
+    return s
+  })
+  if (settings) await check()
+  else if (settings === null) renderPack()
+}
+$('data-change-btn').addEventListener('click', () => changeDataDir(false))
+$('data-default-btn').addEventListener('click', () => changeDataDir(true))
 
 $('open-folder-btn').addEventListener('click', () => api.open('instance'))
 $('share-log-btn').addEventListener('click', shareLog)

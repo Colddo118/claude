@@ -222,6 +222,8 @@ Attempted to load class net/minecraft/client/... for invalid dist DEDICATED_SERV
 - 버전 번호는 `launcher/package.json` 의 `version` 입니다 (설정 창 제목 옆에 보임).
   **런처를 고칠 때마다 이 숫자를 올려야** 친구들 런처가 새 버전을 알아챕니다 (예: 0.3.0 → 0.3.1).
 - **v0.3.0 부터 런처가 스스로 업데이트**합니다: 켤 때 새 버전이 있으면 받아서 조용히 설치하고 다시 켜집니다.
+- **v0.4.0 부터 설치 파일이 설치 폴더를 물어봅니다** (기본 `%LOCALAPPDATA%\Programs\KubejsRPG`, 고른 폴더 끝에 `KubejsRPG` 가 자동으로 붙음).
+  자동 업데이트는 처음 고른 폴더에 그대로 다시 깝니다. 업데이트 때 설치 폴더는 통째로 지워지므로 게임 파일은 그 밖(기본 `%APPDATA%\kubejsrpg-launcher`, 설정창에서 옮김)에 둡니다.
   그 이전 버전(0.2.x)을 쓰는 친구만 설치 파일을 한 번 다시 실행하면 됩니다.
 
 ## 런처 공지: `notice.bat`

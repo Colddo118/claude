@@ -3,7 +3,7 @@
 const fs = require('node:fs')
 const fsp = fs.promises
 const path = require('node:path')
-const { app, BrowserWindow, ipcMain, shell, clipboard } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, clipboard, dialog } = require('electron')
 const config = require('../../launcher.config.json')
 const updater = require('./updater')
 const { compareVersions } = require('../common/manifest')
@@ -12,25 +12,36 @@ const serversDat = require('./servers-dat')
 const { pingServer } = require('./server-status')
 const selfUpdate = require('./self-update')
 const logShare = require('./log-share')
+const dataLocation = require('./data-location')
 const { AccountStore, loginInteractive, getLaunchAuthorization } = require('./auth')
 
 const manifestUrl = process.env.MODPACK_MANIFEST_URL || config.manifestUrl
 
+// base = 설정 · 계정 · 게임 파일 위치 기록 (항상 %APPDATA% 아래 고정)
+// dirs.base = 게임 파일 폴더 (기본은 base 와 같고, 설정창에서 다른 드라이브로 옮길 수 있음)
 const base = path.join(app.getPath('appData'), config.dataFolderName)
-const dirs = {
-  base,
-  instance: path.join(base, 'instance'),
-  minecraft: path.join(base, 'minecraft'),
-  runtime: path.join(base, 'runtime'),
-  cache: path.join(base, 'cache'),
-  logs: path.join(base, 'logs')
-}
+const dirs = {}
 const files = {
-  state: path.join(base, 'state.json'),
   settings: path.join(base, 'settings.json'),
-  account: path.join(base, 'account.json'),
-  loginDiagnostic: path.join(base, 'logs', 'login.json')
+  account: path.join(base, 'account.json')
 }
+function setDataDir (dataDir) {
+  Object.assign(dirs, {
+    base: dataDir,
+    instance: path.join(dataDir, 'instance'),
+    minecraft: path.join(dataDir, 'minecraft'),
+    runtime: path.join(dataDir, 'runtime'),
+    cache: path.join(dataDir, 'cache'),
+    logs: path.join(dataDir, 'logs')
+  })
+  files.state = path.join(dataDir, 'state.json')
+  files.loginDiagnostic = path.join(dataDir, 'logs', 'login.json')
+}
+setDataDir(base)
+const dataDirReady = dataLocation.resolveDataDir(base).then(setDataDir)
+
+// 런처 설치 폴더 (업데이트 때 통째로 지워지는 곳 · 게임 파일을 여기 두면 안 됨)
+const installDir = app.isPackaged ? path.dirname(app.getPath('exe')) : null
 
 const accounts = new AccountStore(files.account)
 let win = null
@@ -57,14 +68,17 @@ async function loadSettings () {
     jvmArgs: saved.jvmArgs || '',
     autoConnect: saved.autoConnect !== false,
     hideOnLaunch: saved.hideOnLaunch !== false,
-    javaPath: saved.javaPath || ''
+    javaPath: saved.javaPath || '',
+    dataDir: dirs.base,
+    dataDirIsDefault: dataLocation.samePath(dirs.base, base)
   }
 }
 
 async function saveSettings (s) {
   const current = await loadSettings()
+  const { dataDir, dataDirIsDefault, ...rest } = current
   const next = {
-    ...current,
+    ...rest,
     memoryMB: Math.max(1024, Math.min(Number(s.memoryMB) || current.memoryMB, game.totalMemoryMB())),
     jvmArgs: typeof s.jvmArgs === 'string' ? s.jvmArgs : current.jvmArgs,
     autoConnect: typeof s.autoConnect === 'boolean' ? s.autoConnect : current.autoConnect,
@@ -73,7 +87,7 @@ async function saveSettings (s) {
   }
   await fsp.mkdir(base, { recursive: true })
   await fsp.writeFile(files.settings, JSON.stringify(next, null, 2))
-  return next
+  return { ...next, dataDir, dataDirIsDefault }
 }
 
 // ---------------------------------------------------------------- helpers
@@ -119,7 +133,15 @@ function summarize (manifest, state, plan) {
   }
 }
 
+// 게임 파일을 다른 드라이브에 뒀는데 그 드라이브가 없으면(외장 디스크 뽑힘 등) C: 에 새로 받지 말고 알린다
+function ensureDataDrive () {
+  const root = path.parse(dirs.base).root
+  if (!fs.existsSync(root)) throw new Error(`게임 파일 폴더(${dirs.base})의 ${root} 드라이브를 찾을 수 없습니다. 드라이브를 연결하거나 설정에서 게임 파일 위치를 바꿔 주세요.`)
+}
+
 async function computePlan ({ repair = false } = {}) {
+  await dataDirReady
+  ensureDataDrive()
   const manifest = await updater.fetchManifest(manifestUrl)
   lastManifest = manifest
   const state = await updater.loadState(files.state)
@@ -154,14 +176,17 @@ async function installUpdate ({ repair = false } = {}) {
 
 // ---------------------------------------------------------------- IPC
 
-ipcMain.handle('launcher:init', async () => ({
-  appName: config.appName,
-  appVersion: app.getVersion(),
-  account: await accounts.profile(),
-  settings: await loadSettings(),
-  totalMemoryMB: game.totalMemoryMB(),
-  links: { discord: config.discordUrl || '', website: config.websiteUrl || '' }
-}))
+ipcMain.handle('launcher:init', async () => {
+  await dataDirReady
+  return {
+    appName: config.appName,
+    appVersion: app.getVersion(),
+    account: await accounts.profile(),
+    settings: await loadSettings(),
+    totalMemoryMB: game.totalMemoryMB(),
+    links: { discord: config.discordUrl || '', website: config.websiteUrl || '' }
+  }
+})
 
 ipcMain.handle('pack:check', async () => {
   const { manifest, state, plan } = await computePlan()
@@ -239,10 +264,93 @@ ipcMain.handle('account:logout', async () => {
 
 ipcMain.handle('settings:save', (_e, s) => saveSettings(s))
 
+// 설정 › Java [찾아보기] — 파일 고르기 + `-version` 으로 버전 확인. 돌려주는 값: { path, major } · 취소면 null
+// 저장은 설정창 [저장] 때(settings:save 의 javaPath). 필요한 버전 = 매니페스트 java, 없으면 21(MC 1.20.5 이상 · 이 팩 1.21.1)
+ipcMain.handle('java:pick', async (_e, { current = '' } = {}) => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Java 실행 파일 고르기 (bin 폴더의 javaw.exe)',
+    defaultPath: current ? path.dirname(current) : undefined,
+    filters: process.platform === 'win32' ? [{ name: 'Java', extensions: ['exe'] }] : [],
+    properties: ['openFile']
+  })
+  if (r.canceled || !r.filePaths.length) return null
+  const need = Number(lastManifest && lastManifest.java) || 21
+  const checked = await game.checkJavaExecutable(r.filePaths[0], need)
+  if (checked.error) {
+    await dialog.showMessageBox(win, { type: 'warning', buttons: ['확인'], title: 'Java', message: '이 Java 는 쓸 수 없습니다.', detail: `${checked.error}\n\n${r.filePaths[0]}` })
+    return null
+  }
+  return checked
+})
+
+// 게임 파일 위치 바꾸기. toDefault = 기본 위치(%APPDATA%)로 되돌리기, 아니면 폴더 고르는 창을 띄움.
+// 돌려주는 값: 바뀐 설정 · 취소면 null
+ipcMain.handle('data:change', async (_e, { toDefault = false } = {}) => {
+  await dataDirReady
+  if (busy) throw new Error('이미 작업 중입니다.')
+  if (gameProcess) throw new Error('게임이 실행 중입니다. 게임을 끈 뒤 다시 시도하세요.')
+  const current = dirs.base
+  let target = base
+  if (!toDefault) {
+    const r = await dialog.showOpenDialog(win, {
+      title: '게임 파일을 둘 폴더 고르기',
+      defaultPath: path.dirname(current),
+      properties: ['openDirectory', 'createDirectory', 'promptToCreate']
+    })
+    if (r.canceled || !r.filePaths.length) return null
+    target = dataLocation.targetFromPicked(r.filePaths[0], config.dataFolderName)
+  }
+  const problem = dataLocation.checkTarget({ target, current, installDir })
+  if (problem) throw new Error(problem)
+
+  const mode = dataLocation.planChange({ target, current })
+  const detail = {
+    move: `지금 게임 파일을 아래 폴더로 옮깁니다. 다른 드라이브면 몇 분 걸릴 수 있어요.
+
+${current}
+→ ${target}`,
+    switch: `고른 폴더에 이미 게임 파일이 있어서, 옮기지 않고 그 폴더를 씁니다.
+지금 폴더(${current})의 파일은 그대로 남습니다.
+
+${target}`,
+    empty: `앞으로 게임 파일을 아래 폴더에 받습니다.
+
+${target}`
+  }[mode]
+  const ok = await dialog.showMessageBox(win, {
+    type: 'question',
+    buttons: ['바꾸기', '취소'],
+    defaultId: 0,
+    cancelId: 1,
+    title: '게임 파일 위치',
+    message: '게임 파일 위치를 바꿀까요?',
+    detail
+  })
+  if (ok.response !== 0) return null
+
+  return exclusive(async () => {
+    let copied = []
+    if (mode === 'move') {
+      progress({ phase: 'move', text: '게임 파일 옮기는 중...' })
+      copied = (await dataLocation.moveData({ current, target, onProgress: progress })).copied
+    } else {
+      await fsp.mkdir(target, { recursive: true })
+    }
+    await dataLocation.writePointer(base, target)
+    setDataDir(target)
+    if (copied.length) {
+      progress({ phase: 'move', text: '옛 위치 정리 중...' })
+      await dataLocation.removeOld({ current, copied, configBase: base })
+    }
+    return loadSettings()
+  })
+})
+
 ipcMain.handle('shell:open', (_e, what) => {
   const targets = {
     instance: dirs.instance,
     logs: dirs.logs,
+    data: dirs.base,
     discord: config.discordUrl,
     website: config.websiteUrl
   }

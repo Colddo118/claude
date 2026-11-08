@@ -34,6 +34,7 @@
 | `launcher-version` | 설정 창 제목 오른쪽 런처 버전 |
 | `autoconnect-input`, `hide-input`, `jvm-input` | 설정 항목 |
 | `open-folder-btn`, `open-logs-btn`, `repair-btn` | 게임 폴더 / 로그 폴더 / 파일 검사·복구 |
+| `data-dir`, `data-change-btn`, `data-default-btn` | 게임 파일 위치 표시 / 다른 폴더로 옮기기 / 기본 위치로 (기본 위치면 숨김) |
 
 설정 창의 저장 버튼은 `value="save"`, 취소는 `value="cancel"` 이어야 합니다.
 

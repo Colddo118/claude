@@ -33,6 +33,11 @@ const ADMIN_MANAGED = [
 const SERVER_OWNED = [
   'kubejs/data/rpg/ledger*', 'kubejs/data/rpg/candles*', 'kubejs/data/rpg/telemetry*', 'kubejs/data/rpg/telemetry', 'kubejs/data/rpg/boss_kill_log.json',
   'kubejs/data/rpg/selftest_ledger.json', 'kubejs/config/*.generated.json',
+  'kubejs/data/rpg/land_watch.json',   // 2026-10-28 활동 기록 · 가입 유예(rpg_land_watch) — 개발본이 서버를 덮어 기존 파티원 전원이 유예로 잡혔다
+  'kubejs/data/rpg/user_board.json', 'kubejs/data/rpg/user_earn.json', 'kubejs/data/rpg/levy.json', 'kubejs/data/rpg/spawner_cap.json',
+  'kubejs/data/rpg/chat_log', 'kubejs/data/rpg/toss.json',   // 2026-10-28 서버가 쓰는 기록(유저현황 · 벌이 · 징수 · 스포너 · 대화 기록 · 완장지수 폴러)
+  // 2026-10-28 보스 결산 기록(rpg_boss_result logWrite)
+  'kubejs/data/rpg/boss_result_log.json',
   'kubejs/data/rpg/fills'   // 2026-10-12 체결 기록(rpg_exchange fillLog) — 개발 로컬 기록이 서버 폴더에 섞였다
 ]
 

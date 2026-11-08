@@ -83,6 +83,16 @@ function Map-Status {
   return (Map-Run @('status') | Select-Object -Last 1) | ConvertFrom-Json
 }
 
+# 패치노트 초안 (인스턴스 kubejs/dev/patch_draft — 작업 세션들이 그때그때 적어 둔다)
+#  --md <파일> = 메모장에 띄울 패치노트를 초안으로 채움 · --apply = 게임 패치노트(kubejs/config/patch_notes.json)에 넣고 초안 비움
+#  파이썬이나 초안이 없으면 아무것도 안 하고 옛 방식(빈 틀)대로 간다
+function Draft-Run([string[]]$draftArgs) {
+  $script = Join-Path $settings.instance 'kubejs\dev\patch_draft\build.py'
+  if (-not (Test-Path $script) -or -not (Get-Command python -ErrorAction SilentlyContinue)) { return $false }
+  & python -X utf8 $script @draftArgs | ForEach-Object { Write-Host $_ -ForegroundColor DarkCyan }
+  return ($LASTEXITCODE -eq 0)
+}
+
 Write-Host ''
 Write-Host '=== KubejsRPG 패치 배포 ===' -ForegroundColor Cyan
 
@@ -189,10 +199,14 @@ if (-not $version) { throw '버전을 입력해 주세요.' }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $notesFile = Join-Path $OutDir "notes-$version.md"
 if (-not (Test-Path $notesFile)) {
+  $filled = $false
+  try { $filled = Draft-Run @('--md', $notesFile) } catch { $filled = $false }
+  if (-not $filled -or -not (Test-Path $notesFile)) {
   @"
 ## 변경 사항
 - 
 "@ | Set-Content $notesFile -Encoding UTF8
+  }
 }
 Write-Host '메모장이 열리면 패치노트를 쓰고 저장한 뒤 닫으세요.'
 Start-Process notepad.exe -ArgumentList "`"$notesFile`"" -Wait
@@ -212,6 +226,10 @@ if ($settings.serverDir) {
 # --- 2. GitHub 토큰 ---
 Write-Host ''
 if (-not (Ask-YesNo "v$version 을 배포할까요?")) { Write-Host '취소했습니다.'; exit 0 }
+# 게임 안 [패치노트] 창에도 이번 패치 카드를 싣는다 (빌드 전에 — 이번 배포에 같이 들어감)
+try {
+  if (-not (Draft-Run @('--apply', '--version', $version))) { Write-Host '게임 패치노트 초안을 넣지 못했습니다 (배포는 계속). 위 줄을 확인하세요.' -ForegroundColor Yellow }
+} catch { Write-Host "게임 패치노트 초안을 넣지 못했습니다 (배포는 계속): $_" -ForegroundColor Yellow }
 $secure = $null
 if ($settings.token) {
   try { $secure = ConvertTo-SecureString $settings.token } catch { $secure = $null }

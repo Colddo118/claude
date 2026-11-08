@@ -126,6 +126,57 @@ async function ensureJava (major, runtimeDir, onStatus, { consoleExe = false } =
   return found
 }
 
+// ---- 설정에서 직접 고른 Java (2026-10-25 디시 피드백 "자바 버전 못 고르는 런처")
+
+// `java -version` 첫 줄의 버전 → 큰 번호. "1.8.0_402" → 8 · "21.0.2" → 21 · "21" → 21 · 못 읽으면 0
+function parseJavaMajor (text) {
+  const m = /version "([0-9]+)(?:\.([0-9]+))?/.exec(String(text || ''))
+  if (!m) return 0
+  const a = Number(m[1])
+  return a === 1 && m[2] ? Number(m[2]) : a
+}
+
+// 게임은 콘솔 창 없이 javaw.exe 로 띄운다 — java.exe 를 골랐어도 옆에 javaw.exe 가 있으면 그쪽으로
+function preferWindowedJava (exePath) {
+  if (process.platform !== 'win32') return exePath
+  if (path.basename(exePath).toLowerCase() !== 'java.exe') return exePath
+  const w = path.join(path.dirname(exePath), 'javaw.exe')
+  return exists(w) ? w : exePath
+}
+
+// 고른 파일이 쓸 수 있는 Java 인지 — { path, major } 또는 { error }
+async function checkJavaExecutable (exePath, requiredMajor) {
+  const name = path.basename(String(exePath || '')).toLowerCase()
+  const okName = process.platform === 'win32' ? ['java.exe', 'javaw.exe'] : ['java']
+  if (!okName.includes(name)) return { error: `Java 실행 파일(${okName.join(' 또는 ')})을 골라 주세요.` }
+  if (!exists(exePath)) return { error: `파일이 없습니다: ${exePath}` }
+  // -version 은 콘솔 쪽(java.exe)으로 묻는다 — javaw 는 출력 없이 끝나는 빌드가 있다
+  const asker = process.platform === 'win32' && name === 'javaw.exe' && exists(path.join(path.dirname(exePath), 'java.exe'))
+    ? path.join(path.dirname(exePath), 'java.exe')
+    : exePath
+  return new Promise(resolve => {
+    let out = ''
+    let p
+    try {
+      p = spawn(asker, ['-version'], { windowsHide: true })
+    } catch (e) {
+      resolve({ error: `Java 를 실행하지 못했습니다: ${e.message}` })
+      return
+    }
+    const timer = setTimeout(() => { try { p.kill() } catch {} }, 10000)
+    p.stdout.on('data', d => { out += d })
+    p.stderr.on('data', d => { out += d })
+    p.on('error', e => { clearTimeout(timer); resolve({ error: `Java 를 실행하지 못했습니다: ${e.message}` }) })
+    p.on('close', () => {
+      clearTimeout(timer)
+      const major = parseJavaMajor(out)
+      if (!major) resolve({ error: 'Java 버전을 읽지 못했습니다. 다른 Java 를 골라 주세요.' })
+      else if (major < requiredMajor) resolve({ error: `Java ${major} 입니다. 이 모드팩은 Java ${requiredMajor} 이상이 필요합니다.` })
+      else resolve({ path: preferWindowedJava(exePath), major })
+    })
+  })
+}
+
 // 모장 버전 JSON 의 javaVersion.majorVersion 을 따른다 (1.21.1 → 21). 매니페스트의 java 가 있으면 우선.
 function requiredJavaMajor (manifest, vanillaJson) {
   if (manifest.java) return Number(manifest.java)
@@ -233,6 +284,9 @@ async function launchGame ({ manifest, dirs, authorization, settings, launcher, 
   const progress = label => p => onProgress && onProgress({ ...p, text: label })
 
   const vanillaJson = await ensureVanilla(mc, manifest.minecraft, onStatus, progress('마인크래프트 설치 중'))
+  if (settings.javaPath && !exists(settings.javaPath)) {
+    throw new Error(`설정에서 고른 Java 를 찾을 수 없습니다: ${settings.javaPath} — 설정 › Java 에서 [자동]을 누르거나 다시 골라 주세요.`)
+  }
   const javaPath = settings.javaPath || await ensureJava(requiredJavaMajor(manifest, vanillaJson), dirs.runtime, onStatus)
 
   let versionId = await ensureLoader(manifest, mc, javaPath, { onStatus, onProgress: progress(`${manifest.loader.type} 설치 중`) })
@@ -279,4 +333,4 @@ function totalMemoryMB () {
   return Math.floor(os.totalmem() / 1024 / 1024)
 }
 
-module.exports = { friendlyError, withRetry, launchGame, buildLaunchOptions, ensureJava, ensureLoader, requiredJavaMajor, totalMemoryMB, serverArgs, jvmArgs }
+module.exports = { friendlyError, withRetry, launchGame, buildLaunchOptions, ensureJava, ensureLoader, requiredJavaMajor, totalMemoryMB, serverArgs, jvmArgs, parseJavaMajor, preferWindowedJava, checkJavaExecutable }

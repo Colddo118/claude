@@ -1,7 +1,7 @@
 {
   "name": "modpack-launcher",
   "productName": "KubejsRPG",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "KubejsRPG 모드팩 런처",
   "main": "src/main/main.js",
   "private": true,
@@ -34,7 +34,8 @@
       "target": "nsis-web"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
       "perMachine": false,
       "runAfterFinish": true,
       "createDesktopShortcut": true,
