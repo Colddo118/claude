@@ -27,11 +27,34 @@ function manifestUrl (repo) {
   return `${WEB()}/${repo}/releases/latest/download/manifest.json`
 }
 
+// GitHub 이 잠깐 502 · 503 · 504 를 주거나 연결이 끊길 때가 있어서, 읽기 요청은 몇 번 다시 해 본다.
+// (올리기 · 지우기는 실제로는 처리됐을 수 있어 다시 하지 않는다)
+const RETRY_STATUS = new Set([502, 503, 504])
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+const retryDelay = n => (Number(process.env.GITHUB_RETRY_DELAY_MS) || 2000) * [1, 2.5][n]
+
+async function withRetry (send, { tries = 3 } = {}) {
+  for (let n = 0; ; n++) {
+    let res
+    try {
+      res = await send()
+    } catch (e) {
+      if (n + 1 >= tries) throw e
+      await sleep(retryDelay(n))
+      continue
+    }
+    if (!RETRY_STATUS.has(res.status) || n + 1 >= tries) return res
+    await res.arrayBuffer().catch(() => {})
+    await sleep(retryDelay(n))
+  }
+}
+
+// token 이 없으면 인증 없이 부른다 (공개 저장소 읽기는 그걸로 충분)
 async function api (token, method, url, body, headers = {}) {
-  const res = await fetch(url, {
+  const send = () => fetch(url, {
     method,
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
       ...(body && !Buffer.isBuffer(body) ? { 'Content-Type': 'application/json' } : {}),
@@ -39,6 +62,7 @@ async function api (token, method, url, body, headers = {}) {
     },
     body: body && !Buffer.isBuffer(body) ? JSON.stringify(body) : body
   })
+  const res = method === 'GET' ? await withRetry(send) : await send()
   const text = await res.text()
   if (!res.ok) {
     let msg = text
@@ -109,13 +133,20 @@ async function publishRelease ({ repo, token, version, notes, files, log = () =>
   }
 }
 
+// 태그로 공개된 릴리스 찾기 (없으면 null)
+async function getReleaseByTag ({ repo, token, tag }) {
+  try {
+    return await api(token, 'GET', `${API()}/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`)
+  } catch (e) {
+    if (e.status === 404) return null
+    throw e
+  }
+}
+
 // 고정 태그(사전 배포) 릴리스: 모드팩 런처가 보는 releases/latest 에 잡히지 않는다
 async function getOrCreatePrerelease ({ repo, token, tag, name, body = '' }) {
-  try {
-    return await api(token, 'GET', `${API()}/repos/${repo}/releases/tags/${tag}`)
-  } catch (e) {
-    if (e.status !== 404) throw e
-  }
+  const found = await getReleaseByTag({ repo, token, tag })
+  if (found) return found
   return api(token, 'POST', `${API()}/repos/${repo}/releases`, { tag_name: tag, name, body, prerelease: true, make_latest: 'false' })
 }
 
@@ -137,4 +168,4 @@ async function deleteAsset ({ repo, token, id }) {
   return api(token, 'DELETE', `${API()}/repos/${repo}/releases/assets/${id}`)
 }
 
-module.exports = { api, API, publishRelease, assetUrl, releaseDownloadPrefix, manifestUrl, releaseTag, getOrCreatePrerelease, listAssets, uploadAsset, deleteAsset }
+module.exports = { api, API, withRetry, publishRelease, assetUrl, releaseDownloadPrefix, manifestUrl, releaseTag, getReleaseByTag, getOrCreatePrerelease, listAssets, uploadAsset, deleteAsset }

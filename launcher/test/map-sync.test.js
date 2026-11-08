@@ -15,6 +15,7 @@ const mapSync = require('../../tools/lib/map-sync')
 const secret = require('../src/common/secret')
 
 let tmp, server, base
+let mapList504 = 0 // server-map.bin 받기를 이 횟수만큼 504 로 실패시킨다 (GitHub 이 잠깐 튀는 경우)
 const www = () => path.join(tmp, 'www')
 
 function write (root, rel, content) {
@@ -40,7 +41,9 @@ before(async () => {
       const p = url.pathname
       const json = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body === undefined ? '' : JSON.stringify(body)) }
       if (p.startsWith('/api/') || p.startsWith('/uploads/')) {
-        if (req.headers.authorization !== 'Bearer github_pat_test') return json(401, { message: 'Bad credentials' })
+        // 공개 저장소: 읽기는 토큰 없이도 되고, 틀린 토큰은 거부, 쓰기는 토큰 필요
+        const auth = req.headers.authorization
+        if (auth ? auth !== 'Bearer github_pat_test' : req.method !== 'GET') return json(401, { message: 'Bad credentials' })
         if (req.method === 'GET' && p === '/api/repos/me/modpack/releases/tags/server-map') return release ? json(200, release) : json(404, { message: 'Not Found' })
         if (req.method === 'POST' && p === '/api/repos/me/modpack/releases') {
           const b = JSON.parse(Buffer.concat(chunks))
@@ -68,7 +71,10 @@ before(async () => {
         return json(404, { message: `no route ${req.method} ${p}` })
       }
       const file = path.join(www(), decodeURIComponent(p))
-      if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end() }
+      const isMapDownload = p.startsWith('/me/modpack/releases/download/server-map/')
+      if (isMapDownload && p.endsWith('/server-map.bin') && mapList504 > 0) { mapList504--; res.writeHead(504); return res.end('We couldn\'t respond to your request in time.') }
+      // 지금의 GitHub 처럼: 없는 릴리스 파일을 받으려 하면 404 대신 504
+      if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(isMapDownload ? 504 : 404); return res.end() }
       res.writeHead(200, { 'Content-Length': fs.statSync(file).size })
       if (req.method === 'HEAD') return res.end()
       fs.createReadStream(file).pipe(res)
@@ -79,11 +85,13 @@ before(async () => {
   process.env.GITHUB_WEB_URL = base
   process.env.GITHUB_API_URL = `${base}/api`
   process.env.MODRINTH_API_URL = `${base}/no-modrinth`
+  process.env.GITHUB_RETRY_DELAY_MS = '1'
 })
 
 after(() => {
   delete process.env.GITHUB_WEB_URL
   delete process.env.GITHUB_API_URL
+  delete process.env.GITHUB_RETRY_DELAY_MS
   server.close()
   fs.rmSync(tmp, { recursive: true, force: true })
 })
@@ -177,6 +185,13 @@ test('대륙 맵: 올리기는 관리자가 고친 region 만 덮고, 받기는 
   assert.equal(read(srv, `${sw}/region/r.0.0.mca`), 'MAPDATA_A_srv')
   assert.equal(read(srv, `${sw}/region/r.1.0.mca`), 'MAPDATA_B2')
 
+  // 서버가 아직 맵을 보낸 적 없음(server-map 릴리스 없음): 다운로드 주소가 504 를 줘도 "서버 맵 없음" 으로 넘어간다
+  const tools = path.join(__dirname, '..', '..', 'tools')
+  const env = { SERVER_PACK_KEY: key }
+  const st0 = await run(tools, ['map.js', 'status', '--source', src, '--out', out], env)
+  assert.equal(st0.code, 0, st0.out)
+  assert.equal(JSON.parse(st0.out.trim().split('\n').pop()).server, null)
+
   // 서버 → 관리자: 토큰 없거나 틀리면 실패
   write(srv, `${sw}/region/r.1.0.mca`, 'MAPDATA_B_srv2')
   assert.match((await run(srv, ['server-update.js', '--send-map'], { GITHUB_TOKEN: '' })).out, /GitHub 토큰이 없습니다/)
@@ -191,10 +206,10 @@ test('대륙 맵: 올리기는 관리자가 고친 region 만 덮고, 받기는 
   const s2 = await run(srv, ['server-update.js', '--send-map'], { GITHUB_TOKEN: 'github_pat_test' })
   assert.match(s2.out, /새로 올린 것 0개/)
 
-  // 관리자: 상태 확인 → r.1.0 받기, r.0.0 은 양쪽에서 고침, poi 같음
-  const tools = path.join(__dirname, '..', '..', 'tools')
-  const env = { SERVER_PACK_KEY: key }
+  // 관리자: 상태 확인 → r.1.0 받기, r.0.0 은 양쪽에서 고침, poi 같음 (목록 받기가 한 번 504 로 튀어도 다시 받는다)
+  mapList504 = 1
   const st = await run(tools, ['map.js', 'status', '--source', src, '--out', out], env)
+  assert.equal(mapList504, 0)
   assert.equal(st.code, 0, st.out)
   const status = JSON.parse(st.out.trim().split('\n').pop())
   assert.equal(status.worldInUse, false)

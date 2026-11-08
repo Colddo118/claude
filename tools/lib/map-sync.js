@@ -254,12 +254,21 @@ async function sendServerMap ({ repo, token, key, worldAbs, map, tmpDir, log = (
 }
 
 // 관리자 컴: 서버가 보낸 맵 목록 (없으면 null)
-async function fetchServerMap (repo, key) {
+// 릴리스 다운로드 주소는 없는 파일에 404 대신 한참 뒤 504 를 줄 때가 있다 (2026-11 부터).
+// 그래서 server-map 릴리스와 목록 파일이 있는지는 404 를 제대로 주는 API 로 먼저 확인하고, 있을 때만 받는다.
+async function fetchServerMap (repo, key, { token } = {}) {
+  const release = await github.getReleaseByTag({ repo, token, tag: MAP_TAG })
+  if (!release) return null
+  const uploaded = a => a.name === MAP_MANIFEST && (!a.state || a.state === 'uploaded')
+  if (!(Array.isArray(release.assets) && release.assets.some(uploaded))) {
+    const assets = await github.listAssets({ repo, token, releaseId: release.id })
+    if (!assets.some(uploaded)) return null
+  }
   const url = new URL(mapAssetUrl(repo, MAP_MANIFEST))
   url.searchParams.set('_', Date.now().toString())
-  const res = await fetch(url, { cache: 'no-store' })
+  const res = await github.withRetry(() => fetch(url, { cache: 'no-store' }))
   if (res.status === 404) return null
-  if (!res.ok) throw new Error(`서버 맵 목록을 받지 못했습니다 (HTTP ${res.status})`)
+  if (!res.ok) throw new Error(`서버 맵 목록을 받지 못했습니다 (HTTP ${res.status}). 서버가 맵을 보내는 중일 수 있으니 잠시 후 다시 해 보세요`)
   return JSON.parse(secret.decrypt(Buffer.from(await res.arrayBuffer()), key).toString('utf8'))
 }
 
